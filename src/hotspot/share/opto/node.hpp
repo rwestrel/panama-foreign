@@ -41,6 +41,8 @@ class AliasInfo;
 class AllocateArrayNode;
 class AllocateNode;
 class ArrayCopyNode;
+class BaseCountedLoopNode;
+class BaseCountedLoopEndNode;
 class Block;
 class BoolNode;
 class BoxLockNode;
@@ -85,6 +87,8 @@ class LoadNode;
 class LoadStoreNode;
 class LoadStoreConditionalNode;
 class LockNode;
+class LongCountedLoopNode;
+class LongCountedLoopEndNode;
 class LoopNode;
 class MachBranchNode;
 class MachCallDynamicJavaNode;
@@ -633,7 +637,9 @@ public:
           DEFINE_CLASS_ID(Catch,       PCTable, 0)
           DEFINE_CLASS_ID(Jump,        PCTable, 1)
         DEFINE_CLASS_ID(If,          MultiBranch, 1)
-          DEFINE_CLASS_ID(CountedLoopEnd,         If, 0)
+          DEFINE_CLASS_ID(BaseCountedLoopEnd,     If, 0)
+            DEFINE_CLASS_ID(CountedLoopEnd,       BaseCountedLoopEnd, 0)
+            DEFINE_CLASS_ID(LongCountedLoopEnd,   BaseCountedLoopEnd, 1)
           DEFINE_CLASS_ID(RangeCheck,             If, 1)
           DEFINE_CLASS_ID(OuterStripMinedLoopEnd, If, 2)
         DEFINE_CLASS_ID(NeverBranch, MultiBranch, 2)
@@ -699,7 +705,9 @@ public:
     DEFINE_CLASS_ID(Region, Node, 5)
       DEFINE_CLASS_ID(Loop, Region, 0)
         DEFINE_CLASS_ID(Root,                Loop, 0)
-        DEFINE_CLASS_ID(CountedLoop,         Loop, 1)
+        DEFINE_CLASS_ID(BaseCountedLoop,     Loop, 1)
+          DEFINE_CLASS_ID(CountedLoop,       BaseCountedLoop, 0)
+          DEFINE_CLASS_ID(LongCountedLoop,   BaseCountedLoop, 1)
         DEFINE_CLASS_ID(OuterStripMinedLoop, Loop, 2)
 
     DEFINE_CLASS_ID(Sub,   Node, 6)
@@ -799,6 +807,8 @@ public:
   DEFINE_CLASS_QUERY(Allocate)
   DEFINE_CLASS_QUERY(AllocateArray)
   DEFINE_CLASS_QUERY(ArrayCopy)
+  DEFINE_CLASS_QUERY(BaseCountedLoop)
+  DEFINE_CLASS_QUERY(BaseCountedLoopEnd)
   DEFINE_CLASS_QUERY(Bool)
   DEFINE_CLASS_QUERY(BoxLock)
   DEFINE_CLASS_QUERY(Call)
@@ -834,6 +844,8 @@ public:
   DEFINE_CLASS_QUERY(Initialize)
   DEFINE_CLASS_QUERY(Jump)
   DEFINE_CLASS_QUERY(JumpProj)
+  DEFINE_CLASS_QUERY(LongCountedLoop)
+  DEFINE_CLASS_QUERY(LongCountedLoopEnd)
   DEFINE_CLASS_QUERY(Load)
   DEFINE_CLASS_QUERY(LoadStore)
   DEFINE_CLASS_QUERY(LoadStoreConditional)

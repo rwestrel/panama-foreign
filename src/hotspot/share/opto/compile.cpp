@@ -2153,6 +2153,13 @@ void Compile::Optimize() {
       if (major_progress()) print_method(PHASE_PHASEIDEALLOOP1, 2);
       if (failing())  return;
     }
+    // {
+    //   TracePhase tp("idealLoop", &timers[_t_idealLoop]);
+    //   PhaseIdealLoop::optimize(igvn, LoopOptsDefault);
+    //   _loop_opts_cnt--;
+    //   if (major_progress()) print_method(PHASE_PHASEIDEALLOOP1, 2);
+    //   if (failing())  return;
+    // }
     // Loop opts pass if partial peeling occurred in previous pass
     if(PartialPeelLoop && major_progress() && (_loop_opts_cnt > 0)) {
       TracePhase tp("idealLoop", &timers[_t_idealLoop]);
@@ -3380,11 +3387,13 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
   case Op_Loop:
     assert(!n->as_Loop()->is_transformed_long_loop(), "should have been turned into a counted loop");
   case Op_CountedLoop:
+  case Op_LongCountedLoop:
   case Op_OuterStripMinedLoop:
     if (n->as_Loop()->is_inner_loop()) {
       frc.inc_inner_loop_count();
     }
     n->as_Loop()->verify_strip_mined(0);
+    assert(nop != Op_LongCountedLoop || ((LongCountedLoopNode*)n)->loopexit_or_null() == NULL || ((LongCountedLoopNode*)n)->phi()->as_Phi()->is_long_tripcount(), "");
     break;
   case Op_LShiftI:
   case Op_RShiftI:
@@ -3449,8 +3458,8 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
     break;
   }
   case Op_RangeCheck: {
-    RangeCheckNode* rc = n->as_RangeCheck();
-    Node* iff = new IfNode(rc->in(0), rc->in(1), rc->_prob, rc->_fcnt);
+    IfNode* init_iff = n->as_If();
+    Node* iff = new IfNode(init_iff->in(0), init_iff->in(1), init_iff->_prob, init_iff->_fcnt);
     n->subsume_by(iff, this);
     frc._tests.push(iff);
     break;
@@ -3698,7 +3707,7 @@ bool Compile::final_graph_reshaping() {
 
     // Here so verification code in final_graph_reshaping_walk()
     // always see an OuterStripMinedLoopEnd
-    if (n->is_OuterStripMinedLoopEnd()) {
+    if (n->is_OuterStripMinedLoopEnd() || n->is_LongCountedLoopEnd()) {
       IfNode* init_iff = n->as_If();
       Node* iff = new IfNode(init_iff->in(0), init_iff->in(1), init_iff->_prob, init_iff->_fcnt);
       n->subsume_by(iff, this);
