@@ -35,6 +35,7 @@
 #include "opto/divnode.hpp"
 #include "opto/loopnode.hpp"
 #include "opto/matcher.hpp"
+#include "opto/mathexactnode.hpp"
 #include "opto/mulnode.hpp"
 #include "opto/movenode.hpp"
 #include "opto/opaquenode.hpp"
@@ -347,7 +348,7 @@ Node *PhaseIdealLoop::has_local_phi_input( Node *n ) {
 // Rework addressing expressions to get the most loop-invariant stuff
 // moved out.  We'd like to do all associative operators, but it's especially
 // important (common) to do address expressions.
-Node *PhaseIdealLoop::remix_address_expressions( Node *n ) {
+Node *PhaseIdealLoop::remix_address_expressions(Node *n) {
   if (!has_ctrl(n))  return NULL;
   Node *n_ctrl = get_ctrl(n);
   IdealLoopTree *n_loop = get_loop(n_ctrl);
@@ -381,66 +382,108 @@ Node *PhaseIdealLoop::remix_address_expressions( Node *n ) {
   int n_op = n->Opcode();
 
   // Replace expressions like ((V+I) << 2) with (V<<2 + I<<2).
-  if( n_op == Op_LShiftI ) {
+  if (n_op == Op_LShiftI || n_op == Op_LShiftL) {
     // Scale is loop invariant
     Node *scale = n->in(2);
     Node *scale_ctrl = get_ctrl(scale);
-    IdealLoopTree *scale_loop = get_loop(scale_ctrl );
-    if( n_loop == scale_loop || !scale_loop->is_member( n_loop ) )
+    IdealLoopTree *scale_loop = get_loop(scale_ctrl);
+    if (n_loop == scale_loop || !scale_loop->is_member(n_loop)) {
       return NULL;
-    const TypeInt *scale_t = scale->bottom_type()->isa_int();
-    if( scale_t && scale_t->is_con() && scale_t->get_con() >= 16 )
-      return NULL;              // Dont bother with byte/short masking
+    }
+    if (n_op == Op_LShiftI) {
+      const TypeInt *scale_t = scale->bottom_type()->isa_int();
+      if (scale_t != NULL && scale_t->is_con() && scale_t->get_con() >= 16) {
+        return NULL;              // Dont bother with byte/short masking
+      }
+    } else {
+      const TypeLong *scale_t = scale->bottom_type()->isa_long();
+      if (scale_t != NULL && scale_t->is_con() && scale_t->get_con() >= 16) {
+        return NULL;              // Dont bother with byte/short masking
+      }
+    }
     // Add must vary with loop (else shift would be loop-invariant)
     Node *add = n->in(1);
     Node *add_ctrl = get_ctrl(add);
     IdealLoopTree *add_loop = get_loop(add_ctrl);
     //assert( n_loop == add_loop, "" );
-    if( n_loop != add_loop ) return NULL;  // happens w/ evil ZKM loops
+    if (n_loop != add_loop) return NULL;  // happens w/ evil ZKM loops
 
     // Convert I-V into I+ (0-V); same for V-I
-    if( add->Opcode() == Op_SubI &&
-        _igvn.type( add->in(1) ) != TypeInt::ZERO ) {
-      Node *zero = _igvn.intcon(0);
+    if ((add->Opcode() == Op_SubI &&
+         _igvn.type(add->in(1)) != TypeInt::ZERO) ||
+        (add->Opcode() == Op_SubL &&
+         _igvn.type(add->in(1)) != TypeLong::ZERO)) {
+      Node *zero = NULL;
+      if (n_op == Op_LShiftI) {
+        zero = _igvn.intcon(0);
+      } else {
+        zero = _igvn.longcon(0);
+      }
       set_ctrl(zero, C->root());
-      Node *neg = new SubINode( _igvn.intcon(0), add->in(2) );
-      register_new_node( neg, get_ctrl(add->in(2) ) );
-      add = new AddINode( add->in(1), neg );
-      register_new_node( add, add_ctrl );
+      Node *neg = NULL;
+      if (n_op == Op_LShiftI) {
+        neg = new SubINode(_igvn.intcon(0), add->in(2));
+      } else {
+        neg = new SubLNode(_igvn.longcon(0), add->in(2));
+      }
+      register_new_node(neg, get_ctrl(add->in(2)));
+      if (n_op == Op_LShiftI) {
+        add = new AddINode(add->in(1), neg);
+      } else {
+        add = new AddLNode(add->in(1), neg);
+      }
+      register_new_node(add, add_ctrl);
     }
-    if( add->Opcode() != Op_AddI ) return NULL;
+    if (add->Opcode() != Op_AddI && add->Opcode() != Op_AddL) return NULL;
     // See if one add input is loop invariant
     Node *add_var = add->in(1);
     Node *add_var_ctrl = get_ctrl(add_var);
-    IdealLoopTree *add_var_loop = get_loop(add_var_ctrl );
+    IdealLoopTree *add_var_loop = get_loop(add_var_ctrl);
     Node *add_invar = add->in(2);
     Node *add_invar_ctrl = get_ctrl(add_invar);
-    IdealLoopTree *add_invar_loop = get_loop(add_invar_ctrl );
-    if( add_var_loop == n_loop ) {
-    } else if( add_invar_loop == n_loop ) {
+    IdealLoopTree *add_invar_loop = get_loop(add_invar_ctrl);
+    if (add_var_loop == n_loop) {
+    } else if (add_invar_loop == n_loop) {
       // Swap to find the invariant part
       add_invar = add_var;
       add_invar_ctrl = add_var_ctrl;
       add_invar_loop = add_var_loop;
       add_var = add->in(2);
       Node *add_var_ctrl = get_ctrl(add_var);
-      IdealLoopTree *add_var_loop = get_loop(add_var_ctrl );
-    } else                      // Else neither input is loop invariant
+      IdealLoopTree *add_var_loop = get_loop(add_var_ctrl);
+    } else {                     // Else neither input is loop invariant
       return NULL;
-    if( n_loop == add_invar_loop || !add_invar_loop->is_member( n_loop ) )
+    }
+    if (n_loop == add_invar_loop || !add_invar_loop->is_member(n_loop)) {
       return NULL;              // No invariant part of the add?
-
+    }
+    
     // Yes!  Reshape address expression!
-    Node *inv_scale = new LShiftINode( add_invar, scale );
+    Node *inv_scale = NULL;
+    if (n_op == Op_LShiftI) {
+      inv_scale = new LShiftINode(add_invar, scale);
+    } else {
+      inv_scale = new LShiftLNode(add_invar, scale);
+    }
     Node *inv_scale_ctrl =
       dom_depth(add_invar_ctrl) > dom_depth(scale_ctrl) ?
       add_invar_ctrl : scale_ctrl;
-    register_new_node( inv_scale, inv_scale_ctrl );
-    Node *var_scale = new LShiftINode( add_var, scale );
-    register_new_node( var_scale, n_ctrl );
-    Node *var_add = new AddINode( var_scale, inv_scale );
-    register_new_node( var_add, n_ctrl );
-    _igvn.replace_node( n, var_add );
+    register_new_node(inv_scale, inv_scale_ctrl);
+    Node *var_scale = NULL;
+    if (n_op == Op_LShiftI) {
+      var_scale = new LShiftINode(add_var, scale);
+    } else {
+      var_scale = new LShiftLNode(add_var, scale);
+    }
+    register_new_node(var_scale, n_ctrl);
+    Node *var_add = NULL;
+    if (n_op == Op_LShiftI) {
+      var_add = new AddINode(var_scale, inv_scale);
+    } else {
+      var_add = new AddLNode(var_scale, inv_scale);
+    }
+    register_new_node(var_add, n_ctrl);
+    _igvn.replace_node(n, var_add);
     return var_add;
   }
 
@@ -961,6 +1004,183 @@ void PhaseIdealLoop::try_move_store_after_loop(Node* n) {
   }
 }
 
+bool PhaseIdealLoop::try_reshape_overflow_mul(Node* n) {
+  return false;
+  if (n->Opcode() != Op_OverflowMulL) {
+    return false;
+  }
+
+  IdealLoopTree* loop = get_loop(get_ctrl(n));
+  if (loop == _ltree_root || loop->_child != NULL) {
+    return false;
+  }
+
+  if (n->outcnt() != 1) {
+    return false;
+  }
+
+  Node* bol = n->unique_out();
+  if (!bol->is_Bool() || bol->outcnt() != 1) {
+    return false;
+  }
+  Node* iff = bol->unique_out();
+  if (!iff->is_If() ||
+      get_loop(iff) != loop) {
+    return false;
+  }
+
+  ProjNode* proj_true = iff->as_If()->proj_out(true);
+  ProjNode* proj_false = iff->as_If()->proj_out(false);
+
+  ProjNode* in_loop_proj = NULL;
+  ProjNode* unc_proj = NULL;
+  if (loop->is_member(get_loop(proj_true)) &&
+      proj_false->is_uncommon_trap_proj(Deoptimization::Reason_none)) {
+    in_loop_proj = proj_true;
+    unc_proj = proj_false;
+  } else if (loop->is_member(get_loop(proj_false)) &&
+             proj_true->is_uncommon_trap_proj(Deoptimization::Reason_none)) {
+    in_loop_proj = proj_false;
+    unc_proj = proj_true;
+  } else {
+    return false;
+  }
+  
+  Node* in1 = n->in(1);
+  Node* in2 = n->in(2);
+
+  IdealLoopTree* in1_loop = get_loop(get_ctrl(in1));
+  IdealLoopTree* in2_loop = get_loop(get_ctrl(in2));
+
+  assert(loop->is_member(in1_loop) || loop->is_member(in2_loop), "why is n in the loop?");
+
+  Node* loop_dependent = NULL;
+  Node* loop_independent = NULL;
+  if (!loop->is_member(in1_loop)) {
+    loop_dependent = in2;
+    loop_independent = in1;
+  } else if (!loop->is_member(in2_loop)) {
+    loop_dependent = in1;
+    loop_independent = in2;
+  } else {
+    return false;
+  }
+
+  if (!loop_dependent->is_Add()) {
+    return false;
+  }
+
+  Node* add_in1 = loop_dependent->in(1);
+  Node* add_in2 = loop_dependent->in(2);
+
+  IdealLoopTree* add_in1_loop = get_loop(get_ctrl(add_in1));
+  IdealLoopTree* add_in2_loop = get_loop(get_ctrl(add_in2));
+
+  assert(loop->is_member(add_in1_loop) || loop->is_member(add_in2_loop), "why is the add in the loop?");
+
+  Node* add_loop_dependent = NULL;
+  Node* add_loop_independent = NULL;
+  if (!loop->is_member(add_in1_loop)) {
+    add_loop_dependent = add_in2;
+    add_loop_independent = add_in1;
+  } else if (!loop->is_member(add_in2_loop)) {
+    add_loop_dependent = add_in1;
+    add_loop_independent = add_in2;
+  } else {
+    return false;
+  }
+
+  // (OverflowMul loop_independent (Add add_loop_dependent add_loop_independent))
+  // to
+  // (OverflowMul loop_independent add_loop_dependent) -> constant folds
+  // (OverflowMul loop_independent add_loop_independent) -> out of loop
+  // (OverflowAdd (Mul add_loop_dependent loop_independent) (Mul add_loop_independent addloop_dependent))
+
+  
+  Node* overflow_mul1 = n->clone();
+  int nb = overflow_mul1->replace_edge(loop_dependent, add_loop_dependent);
+  assert(nb == 1, "failed replacement");
+
+  overflow_mul1 = _igvn.transform(overflow_mul1);
+
+  if (!_igvn.type(overflow_mul1)->singleton()) {
+    return false;
+  }
+
+  assert(overflow_mul1->is_Con(), "singleton but not a constant");
+  set_ctrl(overflow_mul1, C->root());
+
+  Node* entry_control = loop->_head->in(LoopNode::EntryControl);
+  Node* ctrl = iff->in(0);
+  
+  Node* overflow_mul2 = n->clone();
+  nb = overflow_mul2->replace_edge(loop_dependent, add_loop_independent);
+  assert(nb == 1, "failed replacement");
+  register_new_node(overflow_mul2, entry_control);
+
+  Node* mul1 = new MulLNode(loop_independent, add_loop_independent);
+  register_new_node(mul1, entry_control);
+  
+  Node* mul2 = new MulLNode(loop_independent, add_loop_dependent);
+  register_new_node(mul2, ctrl);
+
+  Node* overflow_add = new OverflowAddLNode(mul1, mul2);
+  register_new_node(overflow_add, ctrl);
+
+  Node* unc_region = new RegionNode(4);
+
+  Node* unc_proj1 = unc_proj->clone();
+  Node* unc_proj2 = unc_proj->clone();
+  Node* unc_proj3 = unc_proj->clone();
+
+  Node* in_loop_proj2 = in_loop_proj->clone();
+  Node* in_loop_proj3 = in_loop_proj->clone();
+
+  Node* iff2 = iff->clone();
+  Node* iff3 = iff->clone();
+
+  Node* bol2 = bol->clone();
+  Node* bol3 = bol->clone();
+
+  _igvn.replace_input_of(bol, 1, overflow_add);
+  bol2->set_req(1, overflow_mul2);
+  bol3->set_req(1, overflow_mul1);
+  register_new_node(bol2, get_ctrl(overflow_mul2));
+  register_new_node(bol3, get_ctrl(overflow_mul1));
+
+  iff3->set_req(1, bol3);
+  iff3->set_req(0, iff->in(0));
+  unc_proj3->set_req(0, iff3);
+  in_loop_proj3->set_req(0, iff3);
+  register_control(iff3, loop, iff3->in(0));
+  register_control(unc_proj3, loop, iff3);
+  register_control(in_loop_proj3, loop, iff3);
+  
+  iff2->set_req(1, bol2);
+  iff2->set_req(0, in_loop_proj3);
+  unc_proj2->set_req(0, iff2);
+  in_loop_proj2->set_req(0, iff2);
+  register_control(iff2, loop, iff2->in(0));
+  register_control(unc_proj2, loop, iff2);
+  register_control(in_loop_proj2, loop, iff2);
+
+  _igvn.replace_input_of(iff, 0, in_loop_proj2);
+  set_idom(iff, in_loop_proj2, dom_depth(in_loop_proj2));
+  register_control(unc_proj1, loop, iff);
+
+  unc_region->set_req(1, unc_proj1);
+  unc_region->set_req(2, unc_proj2);
+  unc_region->set_req(3, unc_proj3);
+  register_control(unc_region, loop, iff3);
+
+  lazy_replace(unc_proj, unc_region);
+
+  C->print_method(PHASE_DEBUG, 2);
+  
+  return true;
+}
+
+
 //------------------------------split_if_with_blocks_pre-----------------------
 // Do the real work in a non-recursive function.  Data nodes want to be
 // cloned in the pre-order so they can feed each other nicely.
@@ -1007,6 +1227,10 @@ Node *PhaseIdealLoop::split_if_with_blocks_pre( Node *n ) {
 
   Node* res = try_move_store_before_loop(n, n_ctrl);
   if (res != NULL) {
+    return n;
+  }
+
+  if (n->Opcode() == Op_AddL && n->in(1)->is_Phi() && n->in(1)->as_Phi()->is_long_tripcount()) {
     return n;
   }
 
@@ -1068,12 +1292,12 @@ Node *PhaseIdealLoop::split_if_with_blocks_pre( Node *n ) {
   if (must_throttle_split_if()) return n;
 
   // Split 'n' through the merge point if it is profitable
-  Node *phi = split_thru_phi( n, n_blk, policy );
+  Node *phi = split_thru_phi(n, n_blk, policy);
   if (!phi) return n;
 
   // Found a Phi to split thru!
   // Replace 'n' with the new phi
-  _igvn.replace_node( n, phi );
+  _igvn.replace_node(n, phi);
   // Moved a load around the loop, 'en-registering' something.
   if (n_blk->is_Loop() && n->is_Load() &&
       !phi->in(LoopNode::LoopBackControl)->is_Load())
@@ -1242,6 +1466,10 @@ static Node* is_inner_of_stripmined_loop(const Node* out) {
 // in the post-order, so it can dirty the I-DOM info and not use the dirtied
 // info.
 void PhaseIdealLoop::split_if_with_blocks_post(Node *n) {
+  
+  if (try_reshape_overflow_mul(n)) {
+    return;
+  }
 
   // Cloning Cmp through Phi's involves the split-if transform.
   // FastLock is not used by an If

@@ -32,7 +32,7 @@
 #include "opto/type.hpp"
 
 class CmpNode;
-class CountedLoopEndNode;
+class BaseCountedLoopEndNode;
 class CountedLoopNode;
 class IdealLoopTree;
 class LoopNode;
@@ -192,7 +192,30 @@ public:
 // produce a loop-body control and the trip counter value.  Since
 // CountedLoopNodes behave like RegionNodes I still have a standard CFG model.
 
-class CountedLoopNode : public LoopNode {
+class BaseCountedLoopNode : public LoopNode {
+public:
+  BaseCountedLoopNode(Node *entry, Node *backedge)
+    : LoopNode(entry, backedge) {
+  }
+
+  Node *init_control() const { return in(EntryControl); }
+  Node *back_control() const { return in(LoopBackControl); }
+
+  Node *init_trip() const;
+  Node *stride() const;
+  bool  stride_is_con() const;
+  Node *limit() const;
+  Node *incr() const;
+  Node *phi() const;
+
+  BaseCountedLoopEndNode *loopexit_or_null() const;
+  BaseCountedLoopEndNode *loopexit() const;
+
+  virtual const Type* phi_type(PhaseGVN* phase) const = 0;
+};
+
+
+class CountedLoopNode : public BaseCountedLoopNode {
   // Size is bigger to hold _main_idx.  However, _main_idx does not change
   // the semantics so it does not appear in the hash & cmp functions.
   virtual uint size_of() const { return sizeof(*this); }
@@ -216,8 +239,8 @@ class CountedLoopNode : public LoopNode {
   int _slp_maximum_unroll_factor;
 
 public:
-  CountedLoopNode( Node *entry, Node *backedge )
-    : LoopNode(entry, backedge), _main_idx(0), _trip_count(max_juint),
+  CountedLoopNode(Node *entry, Node *backedge)
+    : BaseCountedLoopNode(entry, backedge), _main_idx(0), _trip_count(max_juint),
       _unrolled_count_log2(0), _node_count_before_unroll(0),
       _slp_maximum_unroll_factor(0) {
     init_class_id(Class_CountedLoop);
@@ -228,17 +251,10 @@ public:
   virtual int Opcode() const;
   virtual Node *Ideal(PhaseGVN *phase, bool can_reshape);
 
-  Node *init_control() const { return in(EntryControl); }
-  Node *back_control() const { return in(LoopBackControl); }
-  CountedLoopEndNode *loopexit_or_null() const;
-  CountedLoopEndNode *loopexit() const;
-  Node *init_trip() const;
-  Node *stride() const;
+  CountedLoopEndNode *loopexit_or_null() const { return (CountedLoopEndNode*)BaseCountedLoopNode::loopexit_or_null(); }
+  CountedLoopEndNode *loopexit() const { return (CountedLoopEndNode*)BaseCountedLoopNode::loopexit(); }
+
   int   stride_con() const;
-  bool  stride_is_con() const;
-  Node *limit() const;
-  Node *incr() const;
-  Node *phi() const;
 
   // Match increment with optional truncation
   static Node* match_incr_with_optional_truncation(Node* expr, Node** trunc1, Node** trunc2, const TypeInt** trunc_type);
@@ -316,34 +332,47 @@ public:
   static Node* skip_predicates_from_entry(Node* ctrl);
   Node* skip_predicates();
 
+  const Type* phi_type(PhaseGVN* phase) const;
+
 #ifndef PRODUCT
   virtual void dump_spec(outputStream *st) const;
 #endif
 };
 
+class LongCountedLoopNode : public BaseCountedLoopNode {
+public:
+  LongCountedLoopNode(Node *entry, Node *backedge)
+    : BaseCountedLoopNode(entry, backedge) {
+    init_class_id(Class_LongCountedLoop);
+  }
+
+  virtual int Opcode() const;
+
+  const Type* phi_type(PhaseGVN* phase) const;
+};
+
+
 //------------------------------CountedLoopEndNode-----------------------------
 // CountedLoopEndNodes end simple trip counted loops.  They act much like
 // IfNodes.
-class CountedLoopEndNode : public IfNode {
+
+class BaseCountedLoopEndNode : public IfNode {
 public:
   enum { TestControl, TestValue };
-
-  CountedLoopEndNode( Node *control, Node *test, float prob, float cnt )
-    : IfNode( control, test, prob, cnt) {
-    init_class_id(Class_CountedLoopEnd);
+  BaseCountedLoopEndNode(Node *control, Node *test, float prob, float cnt)
+    : IfNode(control, test, prob, cnt) {
+    init_class_id(Class_BaseCountedLoopEnd);
   }
-  virtual int Opcode() const;
 
-  Node *cmp_node() const            { return (in(TestValue)->req() >=2) ? in(TestValue)->in(1) : NULL; }
-  Node *incr() const                { Node *tmp = cmp_node(); return (tmp && tmp->req()==3) ? tmp->in(1) : NULL; }
-  Node *limit() const               { Node *tmp = cmp_node(); return (tmp && tmp->req()==3) ? tmp->in(2) : NULL; }
-  Node *stride() const              { Node *tmp = incr    (); return (tmp && tmp->req()==3) ? tmp->in(2) : NULL; }
-  Node *init_trip() const           { Node *tmp = phi     (); return (tmp && tmp->req()==3) ? tmp->in(1) : NULL; }
-  int stride_con() const;
+  Node* cmp_node() const            { return (in(TestValue)->req() >=2) ? in(TestValue)->in(1) : NULL; }
+  Node* incr() const                { Node* tmp = cmp_node(); return (tmp && tmp->req()==3) ? tmp->in(1) : NULL; }
+  Node* limit() const               { Node* tmp = cmp_node(); return (tmp && tmp->req()==3) ? tmp->in(2) : NULL; }
+  Node* stride() const              { Node* tmp = incr    (); return (tmp && tmp->req()==3) ? tmp->in(2) : NULL; }
+  Node* init_trip() const           { Node* tmp = phi     (); return (tmp && tmp->req()==3) ? tmp->in(1) : NULL; }
   bool stride_is_con() const        { Node *tmp = stride  (); return (tmp != NULL && tmp->is_Con()); }
-  BoolTest::mask test_trip() const  { return in(TestValue)->as_Bool()->_test._test; }
-  PhiNode *phi() const {
-    Node *tmp = incr();
+
+  PhiNode* phi() const {
+    Node* tmp = incr();
     if (tmp && tmp->req() == 3) {
       Node* phi = tmp->in(1);
       if (phi->is_Phi()) {
@@ -352,7 +381,8 @@ public:
     }
     return NULL;
   }
-  CountedLoopNode *loopnode() const {
+
+  BaseCountedLoopNode* loopnode() const {
     // The CountedLoopNode that goes with this CountedLoopEndNode may
     // have been optimized out by the IGVN so be cautious with the
     // pattern matching on the graph
@@ -360,60 +390,88 @@ public:
     if (iv_phi == NULL) {
       return NULL;
     }
-    Node *ln = iv_phi->in(0);
-    if (ln->is_CountedLoop() && ln->as_CountedLoop()->loopexit_or_null() == this) {
-      return (CountedLoopNode*)ln;
+    Node* ln = iv_phi->in(0);
+    if (ln->is_BaseCountedLoop() && ln->as_BaseCountedLoop()->loopexit_or_null() == this) {
+      return (BaseCountedLoopNode*)ln;
     }
     return NULL;
   }
+
+  BoolTest::mask test_trip() const  { return in(TestValue)->as_Bool()->_test._test; }
+};
+
+class CountedLoopEndNode : public BaseCountedLoopEndNode {
+public:
+
+  CountedLoopEndNode(Node *control, Node *test, float prob, float cnt)
+    : BaseCountedLoopEndNode(control, test, prob, cnt) {
+    init_class_id(Class_CountedLoopEnd);
+  }
+  virtual int Opcode() const;
+
+  CountedLoopNode* loopnode() const {
+    return (CountedLoopNode*)BaseCountedLoopEndNode::loopnode();
+  }
+
+  int stride_con() const;
 
 #ifndef PRODUCT
   virtual void dump_spec(outputStream *st) const;
 #endif
 };
 
+class LongCountedLoopEndNode : public BaseCountedLoopEndNode {
+public:
+  LongCountedLoopEndNode(Node *control, Node *test, float prob, float cnt)
+    : BaseCountedLoopEndNode(control, test, prob, cnt) {
+    init_class_id(Class_LongCountedLoopEnd);
+  }
 
-inline CountedLoopEndNode* CountedLoopNode::loopexit_or_null() const {
+  virtual int Opcode() const;
+};
+
+
+inline BaseCountedLoopEndNode* BaseCountedLoopNode::loopexit_or_null() const {
   Node* bctrl = back_control();
   if (bctrl == NULL) return NULL;
 
   Node* lexit = bctrl->in(0);
-  return (CountedLoopEndNode*)
-      (lexit->Opcode() == Op_CountedLoopEnd ? lexit : NULL);
+  return (BaseCountedLoopEndNode*)
+    (lexit->is_BaseCountedLoopEnd() ? lexit : NULL);
 }
 
-inline CountedLoopEndNode* CountedLoopNode::loopexit() const {
-  CountedLoopEndNode* cle = loopexit_or_null();
+inline BaseCountedLoopEndNode* BaseCountedLoopNode::loopexit() const {
+  BaseCountedLoopEndNode* cle = loopexit_or_null();
   assert(cle != NULL, "loopexit is NULL");
   return cle;
 }
 
-inline Node* CountedLoopNode::init_trip() const {
-  CountedLoopEndNode* cle = loopexit_or_null();
+inline Node* BaseCountedLoopNode::init_trip() const {
+  BaseCountedLoopEndNode* cle = loopexit_or_null();
   return cle != NULL ? cle->init_trip() : NULL;
 }
-inline Node* CountedLoopNode::stride() const {
-  CountedLoopEndNode* cle = loopexit_or_null();
+inline Node* BaseCountedLoopNode::stride() const {
+  BaseCountedLoopEndNode* cle = loopexit_or_null();
   return cle != NULL ? cle->stride() : NULL;
 }
 inline int CountedLoopNode::stride_con() const {
   CountedLoopEndNode* cle = loopexit_or_null();
   return cle != NULL ? cle->stride_con() : 0;
 }
-inline bool CountedLoopNode::stride_is_con() const {
-  CountedLoopEndNode* cle = loopexit_or_null();
+inline bool BaseCountedLoopNode::stride_is_con() const {
+  BaseCountedLoopEndNode* cle = loopexit_or_null();
   return cle != NULL && cle->stride_is_con();
 }
-inline Node* CountedLoopNode::limit() const {
-  CountedLoopEndNode* cle = loopexit_or_null();
+inline Node* BaseCountedLoopNode::limit() const {
+  BaseCountedLoopEndNode* cle = loopexit_or_null();
   return cle != NULL ? cle->limit() : NULL;
 }
-inline Node* CountedLoopNode::incr() const {
-  CountedLoopEndNode* cle = loopexit_or_null();
+inline Node* BaseCountedLoopNode::incr() const {
+  BaseCountedLoopEndNode* cle = loopexit_or_null();
   return cle != NULL ? cle->incr() : NULL;
 }
-inline Node* CountedLoopNode::phi() const {
-  CountedLoopEndNode* cle = loopexit_or_null();
+inline Node* BaseCountedLoopNode::phi() const {
+  BaseCountedLoopEndNode* cle = loopexit_or_null();
   return cle != NULL ? cle->phi() : NULL;
 }
 
@@ -1366,6 +1424,7 @@ private:
   void try_move_store_after_loop(Node* n);
   bool identical_backtoback_ifs(Node *n);
   bool can_split_if(Node *n_ctrl);
+  bool try_reshape_overflow_mul(Node* n);
 
   // Determine if a method is too big for a/another round of split-if, based on
   // a magic (approximate) ratio derived from the equally magic constant 35000,

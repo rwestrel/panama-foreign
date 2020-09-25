@@ -1059,33 +1059,13 @@ const Type* PhiNode::Value(PhaseGVN* phase) const {
     return Type::TOP;
 
   // Check for trip-counted loop.  If so, be smarter.
-  CountedLoopNode* l = r->is_CountedLoop() ? r->as_CountedLoop() : NULL;
+  BaseCountedLoopNode* l = r->is_BaseCountedLoop() ? r->as_BaseCountedLoop() : NULL;
   if (l && ((const Node*)l->phi() == this)) { // Trip counted loop!
     // protect against init_trip() or limit() returning NULL
     if (l->can_be_counted_loop(phase)) {
-      const Node *init   = l->init_trip();
-      const Node *limit  = l->limit();
-      const Node* stride = l->stride();
-      if (init != NULL && limit != NULL && stride != NULL) {
-        const TypeInt* lo = phase->type(init)->isa_int();
-        const TypeInt* hi = phase->type(limit)->isa_int();
-        const TypeInt* stride_t = phase->type(stride)->isa_int();
-        if (lo != NULL && hi != NULL && stride_t != NULL) { // Dying loops might have TOP here
-          assert(stride_t->_hi >= stride_t->_lo, "bad stride type");
-          BoolTest::mask bt = l->loopexit()->test_trip();
-          // If the loop exit condition is "not equal", the condition
-          // would not trigger if init > limit (if stride > 0) or if
-          // init < limit if (stride > 0) so we can't deduce bounds
-          // for the iv from the exit condition.
-          if (bt != BoolTest::ne) {
-            if (stride_t->_hi < 0) {          // Down-counter loop
-              swap(lo, hi);
-              return TypeInt::make(MIN2(lo->_lo, hi->_lo) , hi->_hi, 3);
-            } else if (stride_t->_lo >= 0) {
-              return TypeInt::make(lo->_lo, MAX2(lo->_hi, hi->_hi), 3);
-            }
-          }
-        }
+      const Type* res = l->phi_type(phase);
+      if (res != NULL) {
+        return res;
       }
     } else if (l->in(LoopNode::LoopBackControl) != NULL &&
                in(LoopNode::EntryControl) != NULL &&
@@ -2385,6 +2365,11 @@ bool PhiNode::is_tripcount() const {
           in(0)->as_CountedLoop()->phi() == this);
 }
 
+bool PhiNode::is_long_tripcount() const {
+  return (in(0) != NULL && in(0)->is_LongCountedLoop() &&
+          in(0)->as_LongCountedLoop()->phi() == this);
+}
+
 //------------------------------out_RegMask------------------------------------
 const RegMask &PhiNode::in_RegMask(uint i) const {
   return i ? out_RegMask() : RegMask::Empty;
@@ -2409,7 +2394,7 @@ void PhiNode::related(GrowableArray<Node*> *in_rel, GrowableArray<Node*> *out_re
 
 void PhiNode::dump_spec(outputStream *st) const {
   TypeNode::dump_spec(st);
-  if (is_tripcount()) {
+  if (is_tripcount() || is_long_tripcount()) {
     st->print(" #tripcount");
   }
 }

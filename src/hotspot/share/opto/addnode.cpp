@@ -124,6 +124,11 @@ Node *AddNode::Ideal(PhaseGVN *phase, bool can_reshape) {
   // expression tree.
   Node *add1 = in(1);
   Node *add2 = in(2);
+
+  if (add1 != NULL && add1->is_Phi() && add1->as_Phi()->is_long_tripcount()) {
+    return NULL;
+  }
+  
   int add1_op = add1->Opcode();
   int this_op = Opcode();
   if( con_right && t2 != Type::TOP && // Right input is a constant?
@@ -164,7 +169,7 @@ Node *AddNode::Ideal(PhaseGVN *phase, bool can_reshape) {
     Node *a12 = add1->in(2);
     const Type *t12 = phase->type( a12 );
     if( t12->singleton() && t12 != Type::TOP && (add1 != add1->in(1)) &&
-       !(add1->in(1)->is_Phi() && add1->in(1)->as_Phi()->is_tripcount()) ) {
+        !(add1->in(1)->is_Phi() && (add1->in(1)->as_Phi()->is_tripcount() || add1->in(1)->as_Phi()->is_long_tripcount()))) {
       assert(add1->in(1) != this, "dead loop in AddNode::Ideal");
       add2 = add1->clone();
       add2->set_req(2, in(2));
@@ -182,7 +187,7 @@ Node *AddNode::Ideal(PhaseGVN *phase, bool can_reshape) {
     Node *a22 = add2->in(2);
     const Type *t22 = phase->type( a22 );
     if( t22->singleton() && t22 != Type::TOP && (add2 != add2->in(1)) &&
-       !(add2->in(1)->is_Phi() && add2->in(1)->as_Phi()->is_tripcount()) ) {
+        !(add2->in(1)->is_Phi() && (add2->in(1)->as_Phi()->is_tripcount() || add2->in(1)->as_Phi()->is_long_tripcount()))) {
       assert(add2->in(1) != this, "dead loop in AddNode::Ideal");
       Node *addx = add2->clone();
       addx->set_req(1, in(1));

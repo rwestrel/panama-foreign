@@ -375,7 +375,8 @@ Node* IdealLoopTree::reassociate(Node* n1, PhaseIdealLoop *phase) {
   if (is_invariant(n1)) return NULL;
   // Don't mess with add of constant (igvn moves them to expression tree root.)
   if (n1->is_Add() && n1->in(2)->is_Con()) return NULL;
-
+  if (n1->is_Add() && n1->in(1)->is_Phi() && n1->in(1)->as_Phi()->is_long_tripcount()) return NULL;
+  
   int inv1_idx = find_invariant(n1, phase);
   if (!inv1_idx) return NULL;
   Node* n2 = n1->in(3 - inv1_idx);
@@ -484,6 +485,7 @@ uint IdealLoopTree::estimate_peeling(PhaseIdealLoop *phase) {
       // Standard IF only has one input value to check for loop invariance.
       assert(test->Opcode() == Op_If ||
              test->Opcode() == Op_CountedLoopEnd ||
+             test->Opcode() == Op_LongCountedLoopEnd ||
              test->Opcode() == Op_RangeCheck,
              "Check this code when new subtype is added");
       // Condition is not a member of this loop?

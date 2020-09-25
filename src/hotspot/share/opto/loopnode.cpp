@@ -892,10 +892,9 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
 
   // Clone the control flow of the loop to build an outer loop
   Node* outer_back_branch = back_control->clone();
-  Node* outer_exit_test = exit_test->clone();
   Node* inner_exit_branch = exit_branch->clone();
 
-  Node* outer_head = new LoopNode(entry_control, outer_back_branch);
+  LongCountedLoopNode* outer_head = new LongCountedLoopNode(entry_control, outer_back_branch);
   IdealLoopTree* outer_ilt = insert_outer_loop(loop, outer_head->as_Loop(), outer_back_branch);
 
   const bool body_populated = true;
@@ -905,9 +904,17 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   set_loop(inner_exit_branch, outer_ilt);
   set_idom(inner_exit_branch, exit_test, dom_depth(exit_branch));
 
-  outer_exit_test->set_req(0, inner_exit_branch);
+  Node* outer_cmp = cmp->clone();
+  outer_cmp->set_req(1, incr);
+  outer_cmp->set_req(2, limit);
+  register_new_node(outer_cmp, inner_exit_branch);
+  BoolNode* outer_bol = exit_test->in(1)->clone()->as_Bool();
+  (*(BoolTest*)&outer_bol->_test)._test = bt;
+  outer_bol->set_req(1, outer_cmp);
+  register_new_node(outer_bol, inner_exit_branch);
+  LongCountedLoopEndNode* outer_exit_test = new LongCountedLoopEndNode(inner_exit_branch, outer_bol, exit_test->_prob, exit_test->_fcnt);
   register_control(outer_exit_test, outer_ilt, inner_exit_branch, body_populated);
-
+  
   _igvn.replace_input_of(exit_branch, 0, outer_exit_test);
   set_idom(exit_branch, outer_exit_test, dom_depth(exit_branch));
 
@@ -1092,7 +1099,17 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   // of the peeled iteration to insert empty predicates. If no well
   // positioned safepoint peel to guarantee a safepoint in the outer
   // loop.
+
+  C->print_method(PHASE_DEBUG, 2);
+  assert(outer_phi->as_Phi()->is_long_tripcount(), "");
+
   if (safepoint != NULL || !loop->_has_call) {
+    Node* incr = outer_head->incr()->clone();
+    register_new_node(incr, outer_exit_test->in(0));
+    assert(outer_cmp->in(1) == outer_head->incr(), "");
+    assert(outer_phi->in(2) == outer_head->incr(), "");
+    _igvn.replace_input_of(outer_cmp, 1, incr);
+    _igvn.replace_input_of(outer_phi, 2, incr);
     old_new.clear();
     do_peeling(loop, old_new);
   }
@@ -1113,6 +1130,8 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   Atomic::inc(&_long_loop_nests);
 #endif
 
+  C->print_method(PHASE_DEBUG, 2);
+  assert(outer_phi->as_Phi()->is_long_tripcount(), "");
   inner_head->mark_transformed_long_loop();
   
   return true;
@@ -2184,6 +2203,63 @@ Node* CountedLoopNode::skip_predicates() {
   }
   return in(LoopNode::EntryControl);
 }
+
+const Type* CountedLoopNode::phi_type(PhaseGVN* phase) const {
+  const Node *init   = init_trip();
+  const Node *limit  = this->limit();
+  const Node* stride = this->stride();
+  if (init != NULL && limit != NULL && stride != NULL) {
+    const TypeInt* lo = phase->type(init)->isa_int();
+    const TypeInt* hi = phase->type(limit)->isa_int();
+    const TypeInt* stride_t = phase->type(stride)->isa_int();
+    if (lo != NULL && hi != NULL && stride_t != NULL) { // Dying loops might have TOP here
+      assert(stride_t->_hi >= stride_t->_lo, "bad stride type");
+      BoolTest::mask bt = loopexit()->test_trip();
+      // If the loop exit condition is "not equal", the condition
+      // would not trigger if init > limit (if stride > 0) or if
+      // init < limit if (stride > 0) so we can't deduce bounds
+      // for the iv from the exit condition.
+      if (bt != BoolTest::ne) {
+        if (stride_t->_hi < 0) {          // Down-counter loop
+          swap(lo, hi);
+          return TypeInt::make(MIN2(lo->_lo, hi->_lo) , hi->_hi, 3);
+        } else if (stride_t->_lo >= 0) {
+          return TypeInt::make(lo->_lo, MAX2(lo->_hi, hi->_hi), 3);
+        }
+      }
+    }
+  }
+  return NULL;
+}
+
+const Type* LongCountedLoopNode::phi_type(PhaseGVN* phase) const {
+  const Node *init   = init_trip();
+  const Node *limit  = this->limit();
+  const Node* stride = this->stride();
+  if (init != NULL && limit != NULL && stride != NULL) {
+    const TypeLong* lo = phase->type(init)->isa_long();
+    const TypeLong* hi = phase->type(limit)->isa_long();
+    const TypeLong* stride_t = phase->type(stride)->isa_long();
+    if (lo != NULL && hi != NULL && stride_t != NULL) { // Dying loops might have TOP here
+      assert(stride_t->_hi >= stride_t->_lo, "bad stride type");
+      BoolTest::mask bt = loopexit()->test_trip();
+      // If the loop exit condition is "not equal", the condition
+      // would not trigger if init > limit (if stride > 0) or if
+      // init < limit if (stride > 0) so we can't deduce bounds
+      // for the iv from the exit condition.
+      if (bt != BoolTest::ne) {
+        if (stride_t->_hi < 0) {          // Down-counter loop
+          swap(lo, hi);
+          return TypeLong::make(MIN2(lo->_lo, hi->_lo) , hi->_hi, 3);
+        } else if (stride_t->_lo >= 0) {
+          return TypeLong::make(lo->_lo, MAX2(lo->_hi, hi->_hi), 3);
+        }
+      }
+    }
+  }
+  return NULL;
+}
+
 
 void OuterStripMinedLoopNode::adjust_strip_mined_loop(PhaseIterGVN* igvn) {
   // Look for the outer & inner strip mined loop, reduce number of
