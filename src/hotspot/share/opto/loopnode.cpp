@@ -627,6 +627,54 @@ void PhaseIdealLoop::add_empty_predicate(Deoptimization::DeoptReason reason, Nod
 // Find a safepoint node that dominates the back edge. We need a
 // SafePointNode so we can use its jvm state to create empty
 // predicates.
+static bool no_side_effect_since_safepoint(Compile* C, Node* x, Node* mem, MergeMemNode* mm) {
+  SafePointNode* safepoint = NULL;
+  for (DUIterator_Fast imax, i = x->fast_outs(imax); i < imax; i++) {
+    Node* u = x->fast_out(i);
+    if (u->is_Phi() && u->bottom_type() == Type::MEMORY) {
+      Node* m = u->in(LoopNode::LoopBackControl);
+      if (u->adr_type() == TypePtr::BOTTOM) {
+        if (m->is_MergeMem() && mem->is_MergeMem()) {
+          if (m != mem DEBUG_ONLY(|| true)) {
+            for (MergeMemStream mms(m->as_MergeMem(), mem->as_MergeMem()); mms.next_non_empty2(); ) {
+              if (!mms.is_empty()) {
+                if (mms.memory() != mms.memory2()) {
+                  return false;
+                }
+#ifdef ASSERT
+                if (mms.alias_idx() != Compile::AliasIdxBot) {
+                  mm->set_memory_at(mms.alias_idx(), mem->as_MergeMem()->base_memory());
+                }
+#endif
+              } 
+            }
+          }
+        } else if (mem->is_MergeMem()) {
+          if (m != mem->as_MergeMem()->base_memory()) {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      } else {
+        if (mem->is_MergeMem()) {
+          if (m != mem->as_MergeMem()->memory_at(C->get_alias_index(u->adr_type()))) {
+            return false;
+          }
+#ifdef ASSERT
+          mm->set_memory_at(C->get_alias_index(u->adr_type()), mem->as_MergeMem()->base_memory());
+#endif
+        } else {
+          if (m != mem) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
 SafePointNode* PhaseIdealLoop::find_safepoint(Node* back_control, Node* x, IdealLoopTree* loop) {
   IfNode* exit_test = back_control->in(0)->as_If();
   SafePointNode* safepoint = NULL;
@@ -651,9 +699,9 @@ SafePointNode* PhaseIdealLoop::find_safepoint(Node* back_control, Node* x, Ideal
     // We can only use that safepoint if there's not side effect
     // between the backedge and the safepoint.
 
-#ifdef ASSERT
     // mm is used for book keeping
     MergeMemNode* mm = NULL;
+#ifdef ASSERT
     if (mem->is_MergeMem()) {
       mm = mem->clone()->as_MergeMem();
       for (MergeMemStream mms(mem->as_MergeMem()); mms.next_non_empty(); ) {
@@ -663,52 +711,13 @@ SafePointNode* PhaseIdealLoop::find_safepoint(Node* back_control, Node* x, Ideal
       }
     }
 #endif
-    for (DUIterator_Fast imax, i = x->fast_outs(imax); i < imax; i++) {
-      Node* u = x->fast_out(i);
-      if (u->is_Phi() && u->bottom_type() == Type::MEMORY) {
-        Node* m = u->in(LoopNode::LoopBackControl);
-        if (u->adr_type() == TypePtr::BOTTOM) {
-          if (m->is_MergeMem() && mem->is_MergeMem()) {
-            if (m != mem DEBUG_ONLY(|| true)) {
-              for (MergeMemStream mms(m->as_MergeMem(), mem->as_MergeMem()); mms.next_non_empty2(); ) {
-                if (!mms.is_empty()) {
-                  if (mms.memory() != mms.memory2()) {
-                    return NULL;
-                  }
-#ifdef ASSERT
-                  if (mms.alias_idx() != Compile::AliasIdxBot) {
-                    mm->set_memory_at(mms.alias_idx(), mem->as_MergeMem()->base_memory());
-                  }
-#endif
-                } 
-              }
-            }
-          } else if (mem->is_MergeMem()) {
-            if (m != mem->as_MergeMem()->base_memory()) {
-              return NULL;
-            }
-          } else {
-            return NULL;
-          }
-        } else {
-          if (mem->is_MergeMem()) {
-            if (m != mem->as_MergeMem()->memory_at(C->get_alias_index(u->adr_type()))) {
-              return NULL;
-            }
-#ifdef ASSERT
-            mm->set_memory_at(C->get_alias_index(u->adr_type()), mem->as_MergeMem()->base_memory());
-#endif
-          } else {
-            if (m != mem) {
-              return NULL;
-            }
-          }
-        }
-      }
+    if (!no_side_effect_since_safepoint(C, x, mem, mm)) {
+      safepoint = NULL;
+    } else {
+      assert(mm == NULL|| _igvn.transform(mm) == mem->as_MergeMem()->base_memory(), "all memory state should have been processed");
     }
 #ifdef ASSERT
     if (mm != NULL) {
-      assert (_igvn.transform(mm) == mem->as_MergeMem()->base_memory(), "all memory state should have been processed");
       _igvn.remove_dead_node(mm);
     }
 #endif
@@ -891,7 +900,7 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   }
 
   // Clone the control flow of the loop to build an outer loop
-  Node* outer_back_branch = back_control->clone();
+  Node* outer_back_branch = new IfTrueNode(exit_test); // outer exit not created yet
   Node* inner_exit_branch = exit_branch->clone();
 
   LongCountedLoopNode* outer_head = new LongCountedLoopNode(entry_control, outer_back_branch);
@@ -914,9 +923,17 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   register_new_node(outer_bol, inner_exit_branch);
   LongCountedLoopEndNode* outer_exit_test = new LongCountedLoopEndNode(inner_exit_branch, outer_bol, exit_test->_prob, exit_test->_fcnt);
   register_control(outer_exit_test, outer_ilt, inner_exit_branch, body_populated);
-  
-  _igvn.replace_input_of(exit_branch, 0, outer_exit_test);
-  set_idom(exit_branch, outer_exit_test, dom_depth(exit_branch));
+
+  Node* outer_exit_branch = exit_branch;
+  if (outer_exit_branch->Opcode() != Op_IfFalse) {
+    outer_exit_branch = new IfFalseNode(outer_exit_test);
+    _igvn.register_new_node_with_optimizer(outer_exit_branch);
+    set_loop(outer_exit_branch, get_loop(exit_branch));
+    lazy_replace(exit_branch, outer_exit_branch);
+  } else {
+    _igvn.replace_input_of(outer_exit_branch, 0, outer_exit_test);
+  }
+  set_idom(outer_exit_branch, outer_exit_test, dom_depth(exit_branch));
 
   outer_back_branch->set_req(0, outer_exit_test);
   register_control(outer_back_branch, outer_ilt, outer_exit_test, body_populated);
@@ -1017,7 +1034,7 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   }
 
   LoopNode* inner_head = x->as_Loop();
-  
+
   // Clone inner loop phis to outer loop
   for (uint i = 0; i < inner_head->outcnt(); i++) {
     Node* u = inner_head->raw_out(i);
@@ -1103,13 +1120,14 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   C->print_method(PHASE_DEBUG, 2);
   assert(outer_phi->as_Phi()->is_long_tripcount(), "");
 
+  Node* outer_incr = outer_head->incr()->clone();
+  register_new_node(outer_incr, outer_exit_test->in(0));
+  assert(outer_cmp->in(1) == outer_head->incr(), "");
+  assert(outer_phi->in(2) == outer_head->incr(), "");
+  _igvn.replace_input_of(outer_cmp, 1, outer_incr);
+  _igvn.replace_input_of(outer_phi, 2, outer_incr);
+
   if (safepoint != NULL || !loop->_has_call) {
-    Node* incr = outer_head->incr()->clone();
-    register_new_node(incr, outer_exit_test->in(0));
-    assert(outer_cmp->in(1) == outer_head->incr(), "");
-    assert(outer_phi->in(2) == outer_head->incr(), "");
-    _igvn.replace_input_of(outer_cmp, 1, incr);
-    _igvn.replace_input_of(outer_phi, 2, incr);
     old_new.clear();
     do_peeling(loop, old_new);
   }
@@ -1416,7 +1434,7 @@ bool PhaseIdealLoop::is_counted_loop(Node* x, IdealLoopTree*& loop) {
   // =================================================
   // ---- SUCCESS!   Found A Trip-Counted Loop!  -----
   //
-  assert(x->Opcode() == Op_Loop, "regular loops only");
+  assert(x->Opcode() == Op_Loop || x->Opcode() == Op_LongCountedLoop, "regular loops only");
   C->print_method(PHASE_BEFORE_CLOOPS, 3);
 
   Node *hook = new Node(6);
@@ -3362,10 +3380,45 @@ void IdealLoopTree::counted_loop( PhaseIdealLoop *phase ) {
   } else {
     assert(!_head->is_Loop() || !_head->as_Loop()->is_transformed_long_loop(), "transformation to counted loop should not fail");
     if (_parent != NULL && !_irreducible) {
-    // Not a counted loop. Keep one safepoint.
-    bool keep_one_sfpt = true;
-    remove_safepoints(phase, keep_one_sfpt);
+      // Not a counted loop. Keep one safepoint.
+      bool keep_one_sfpt = true;
+      remove_safepoints(phase, keep_one_sfpt);
+    }
   }
+
+  if (_head->is_LongCountedLoop()) {
+    LongCountedLoopNode* head = _head->as_LongCountedLoop();
+    Node* incr = head->incr();
+    Node* phi = head->phi();
+    BaseCountedLoopEndNode* exit = head->loopexit();
+    Node* bol = exit->in(1);
+    Node* cmp = bol->in(1);
+    assert(cmp->in(1) == incr, "");
+    assert(phi->in(2) == incr, "");
+    if (incr->outcnt() != 1 || cmp->outcnt() != 1 || bol->outcnt() != 1) {
+      incr = incr->clone();
+      phase->register_new_node(incr, exit->in(0));
+      phase->_igvn.replace_input_of(phi, 2, incr);
+    } else {
+      assert(phase->get_ctrl(incr) == exit->in(0), "");
+    }
+    if (cmp->outcnt() != 1 || bol->outcnt() != 1) {
+      cmp = cmp->clone();
+      cmp->set_req(1, incr);
+      phase->register_new_node(cmp, exit->in(0));
+    } else {
+      phase->_igvn.replace_input_of(cmp, 1, incr);
+      assert(phase->get_ctrl(incr) == exit->in(0), "");
+    }
+    if (bol->outcnt() != 1) {
+      bol = bol->clone();
+      bol->set_req(1, cmp);
+      phase->register_new_node(bol, exit->in(0));
+    } else {
+      phase->_igvn.replace_input_of(bol, 1, cmp);
+      assert(phase->get_ctrl(incr) == exit->in(0), "");
+    }
+    phase->_igvn.replace_input_of(exit, 1, bol);
   }
 
   // Recursively
