@@ -1115,7 +1115,7 @@ bool IdealLoopTree::policy_range_check(PhaseIdealLoop *phase) const {
         }
       }
 
-      if (!phase->is_scaled_iv_plus_offset(rc_exp, trip_counter, NULL, NULL)) {
+      if (!phase->is_scaled_iv_plus_offset_int(rc_exp, trip_counter, NULL, NULL)) {
         continue;
       }
       // Found a test like 'trip+off vs limit'. Test is an IfNode, has two (2)
@@ -2462,7 +2462,8 @@ void PhaseIdealLoop::add_constraint(int stride_con, int scale_con, Node *offset,
 
 //------------------------------is_scaled_iv---------------------------------
 // Return true if exp is a constant times an induction var
-bool PhaseIdealLoop::is_scaled_iv(Node* exp, Node* iv, int* p_scale) {
+bool PhaseIdealLoop::is_scaled_iv(Node* exp, Node* iv, jlong* p_scale, BasicType bt) {
+  assert(bt == T_INT || bt == T_LONG, "unexpected int type");
   if (exp == iv) {
     if (p_scale != NULL) {
       *p_scale = 1;
@@ -2470,20 +2471,22 @@ bool PhaseIdealLoop::is_scaled_iv(Node* exp, Node* iv, int* p_scale) {
     return true;
   }
   int opc = exp->Opcode();
-  if (opc == Op_MulI) {
+  if ((bt == T_INT && opc == Op_MulI) ||
+      (bt == T_LONG && opc == Op_MulL)) {
     if (exp->in(1) == iv && exp->in(2)->is_Con()) {
       if (p_scale != NULL) {
-        *p_scale = exp->in(2)->get_int();
+        *p_scale = exp->in(2)->get_integer_as_long(bt);
       }
       return true;
     }
     if (exp->in(2) == iv && exp->in(1)->is_Con()) {
       if (p_scale != NULL) {
-        *p_scale = exp->in(1)->get_int();
+        *p_scale = exp->in(1)->get_integer_as_long(bt);
       }
       return true;
     }
-  } else if (opc == Op_LShiftI) {
+  } else if ((bt == T_INT && opc == Op_LShiftI) ||
+             (bt == T_LONG && opc == Op_LShiftL)) {
     if (exp->in(1) == iv && exp->in(2)->is_Con()) {
       if (p_scale != NULL) {
         *p_scale = 1 << exp->in(2)->get_int();
@@ -2496,24 +2499,26 @@ bool PhaseIdealLoop::is_scaled_iv(Node* exp, Node* iv, int* p_scale) {
 
 //-----------------------------is_scaled_iv_plus_offset------------------------------
 // Return true if exp is a simple induction variable expression: k1*iv + (invar + k2)
-bool PhaseIdealLoop::is_scaled_iv_plus_offset(Node* exp, Node* iv, int* p_scale, Node** p_offset, int depth) {
-  if (is_scaled_iv(exp, iv, p_scale)) {
+bool PhaseIdealLoop::is_scaled_iv_plus_offset(Node* exp, Node* iv, jlong* p_scale, Node** p_offset, BasicType bt, int depth) {
+  assert(bt == T_INT || bt == T_LONG, "unexpected int type");
+  if (is_scaled_iv(exp, iv, p_scale, bt)) {
     if (p_offset != NULL) {
-      Node *zero = _igvn.intcon(0);
+      Node *zero = _igvn.integercon(0, bt);
       set_ctrl(zero, C->root());
       *p_offset = zero;
     }
     return true;
   }
   int opc = exp->Opcode();
-  if (opc == Op_AddI) {
-    if (is_scaled_iv(exp->in(1), iv, p_scale)) {
+  if ((bt == T_INT && opc == Op_AddI) ||
+      (bt == T_LONG && opc == Op_AddL)) {
+    if (is_scaled_iv(exp->in(1), iv, p_scale, bt)) {
       if (p_offset != NULL) {
         *p_offset = exp->in(2);
       }
       return true;
     }
-    if (is_scaled_iv(exp->in(2), iv, p_scale)) {
+    if (is_scaled_iv(exp->in(2), iv, p_scale, bt)) {
       if (p_offset != NULL) {
         *p_offset = exp->in(1);
       }
@@ -2523,29 +2528,30 @@ bool PhaseIdealLoop::is_scaled_iv_plus_offset(Node* exp, Node* iv, int* p_scale,
       Node* offset2 = NULL;
       if (depth < 2 &&
           is_scaled_iv_plus_offset(exp->in(1), iv, p_scale,
-                                   p_offset != NULL ? &offset2 : NULL, depth+1)) {
+                                   p_offset != NULL ? &offset2 : NULL, bt, depth+1)) {
         if (p_offset != NULL) {
           Node *ctrl_off2 = get_ctrl(offset2);
-          Node* offset = new AddINode(offset2, exp->in(2));
+          Node* offset = AddNode::make(offset2, exp->in(2), bt);
           register_new_node(offset, ctrl_off2);
           *p_offset = offset;
         }
         return true;
       }
     }
-  } else if (opc == Op_SubI) {
-    if (is_scaled_iv(exp->in(1), iv, p_scale)) {
+  } else if ((bt == T_INT && opc == Op_SubI) ||
+             (bt == T_LONG && opc == Op_SubL)) {
+    if (is_scaled_iv(exp->in(1), iv, p_scale, bt)) {
       if (p_offset != NULL) {
-        Node *zero = _igvn.intcon(0);
+        Node *zero = _igvn.integercon(0, bt);
         set_ctrl(zero, C->root());
         Node *ctrl_off = get_ctrl(exp->in(2));
-        Node* offset = new SubINode(zero, exp->in(2));
+        Node* offset = SubNode::make(zero, exp->in(2), bt);
         register_new_node(offset, ctrl_off);
         *p_offset = offset;
       }
       return true;
     }
-    if (is_scaled_iv(exp->in(2), iv, p_scale)) {
+    if (is_scaled_iv(exp->in(2), iv, p_scale, bt)) {
       if (p_offset != NULL) {
         *p_scale *= -1;
         *p_offset = exp->in(1);
@@ -2706,7 +2712,7 @@ int PhaseIdealLoop::do_range_check(IdealLoopTree *loop, Node_List &old_new) {
       // Look for trip_counter + offset vs limit
       Node *rc_exp = cmp->in(1);
       Node *limit  = cmp->in(2);
-      int scale_con= 1;        // Assume trip counter not scaled
+      int scale_con = 1;        // Assume trip counter not scaled
 
       Node *limit_c = get_ctrl(limit);
       if (loop->is_member(get_loop(limit_c))) {
@@ -2731,7 +2737,7 @@ int PhaseIdealLoop::do_range_check(IdealLoopTree *loop, Node_List &old_new) {
       // Check for scaled induction variable plus an offset
       Node *offset = NULL;
 
-      if (!is_scaled_iv_plus_offset(rc_exp, trip_counter, &scale_con, &offset)) {
+      if (!is_scaled_iv_plus_offset_int(rc_exp, trip_counter, &scale_con, &offset)) {
         continue;
       }
 

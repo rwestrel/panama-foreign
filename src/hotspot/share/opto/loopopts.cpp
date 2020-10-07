@@ -1175,8 +1175,6 @@ bool PhaseIdealLoop::try_reshape_overflow_mul(Node* n) {
 
   lazy_replace(unc_proj, unc_region);
 
-  C->print_method(PHASE_DEBUG, 2);
-  
   return true;
 }
 

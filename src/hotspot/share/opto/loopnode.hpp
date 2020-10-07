@@ -682,6 +682,8 @@ public:
 
   // Return TRUE if "iff" is a range check.
   bool is_range_check_if(IfNode *iff, PhaseIdealLoop *phase, Invariance& invar) const;
+  bool is_range_check_if(IfNode *iff, PhaseIdealLoop *phase, BasicType bt, Node *iv, Node *&range, Node *&offset,
+                         jlong &scale) const;
 
   // Estimate the number of nodes required when cloning a loop (body).
   uint est_loop_clone_sz(uint factor) const;
@@ -1105,7 +1107,7 @@ public:
   PhiNode* loop_iv_phi(Node* xphi, Node* phi_incr, Node* x, IdealLoopTree* loop);
 
   bool is_counted_loop(Node* n, IdealLoopTree* &loop);
-  void long_loop_replace_long_iv(Node* iv_to_replace, Node* inner_iv, Node* outer_phi, Node* inner_head);
+  Node * long_loop_replace_long_iv(Node* iv_to_replace, Node* inner_iv, Node* outer_phi, Node* inner_head);
   bool is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_List &old_new);
 #ifdef ASSERT
   bool convert_to_long_loop(Node* cmp, Node* phi, IdealLoopTree* loop);
@@ -1207,10 +1209,25 @@ public:
   void mark_reductions( IdealLoopTree *loop );
 
   // Return true if exp is a constant times an induction var
-  bool is_scaled_iv(Node* exp, Node* iv, int* p_scale);
+  bool is_scaled_iv(Node* exp, Node* iv, jlong* p_scale, BasicType bt);
 
   // Return true if exp is a scaled induction var plus (or minus) constant
-  bool is_scaled_iv_plus_offset(Node* exp, Node* iv, int* p_scale, Node** p_offset, int depth = 0);
+  bool is_scaled_iv_plus_offset(Node* exp, Node* iv, jlong* p_scale, Node** p_offset, BasicType bt, int depth = 0);
+  bool is_scaled_iv_plus_offset_int(Node* exp, Node* iv, int* p_scale, Node** p_offset) {
+    jlong long_scale;
+    if (is_scaled_iv_plus_offset(exp, iv, &long_scale, p_offset, T_INT)) {
+      int int_scale = (int)long_scale;
+      assert(((jlong)int_scale) == long_scale, "not an int");
+      if (p_scale != NULL) {
+        *p_scale = int_scale;
+      }
+      return true;
+    }
+    return false;
+  }
+  bool is_scaled_iv_plus_offset_long(Node* exp, Node* iv, jlong* p_scale, Node** p_offset) {
+    return is_scaled_iv_plus_offset(exp, iv, p_scale, p_offset, T_LONG);
+  }
 
   // Create a new if above the uncommon_trap_if_pattern for the predicate to be promoted
   ProjNode* create_new_if_for_predicate(ProjNode* cont_proj, Node* new_entry, Deoptimization::DeoptReason reason,

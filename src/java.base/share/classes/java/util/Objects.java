@@ -360,6 +360,30 @@ public final class Objects {
     }
 
     /**
+     * Checks if the {@code index} is within the bounds of the range from
+     * {@code 0} (inclusive) to {@code length} (exclusive).
+     *
+     * <p>The {@code index} is defined to be out of bounds if any of the
+     * following inequalities is true:
+     * <ul>
+     *  <li>{@code index < 0}</li>
+     *  <li>{@code index >= length}</li>
+     *  <li>{@code length < 0}, which is implied from the former inequalities</li>
+     * </ul>
+     *
+     * @param index the index
+     * @param length the upper-bound (exclusive) of the range
+     * @return {@code index} if it is within bounds of the range
+     * @throws IndexOutOfBoundsException if the {@code index} is out of bounds
+     * @since 9
+     */
+    @ForceInline
+    public static
+    long checkLongIndex(long index, long length) {
+        return Preconditions.checkLongIndex(index, length, null);
+    }
+
+    /**
      * Checks if the sub-range from {@code fromIndex} (inclusive) to
      * {@code toIndex} (exclusive) is within the bounds of range from {@code 0}
      * (inclusive) to {@code length} (exclusive).

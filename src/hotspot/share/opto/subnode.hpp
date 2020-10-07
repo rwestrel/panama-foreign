@@ -60,6 +60,8 @@ public:
   // Supplied function to return the additive identity type.
   // This is returned whenever the subtracts inputs are the same.
   virtual const Type *add_id() const = 0;
+
+  static SubNode* make(Node* in1, Node* in2, BasicType bt);
 };
 
 
@@ -139,6 +141,8 @@ public:
   const Type *add_id() const { return TypeInt::ZERO; }
   const Type *bottom_type() const { return TypeInt::CC; }
   virtual uint ideal_reg() const { return Op_RegFlags; }
+
+  static CmpNode *make(Node *in1, Node *in2, BasicType bt, bool unsigned_comp = false);
 
 #ifndef PRODUCT
   // CmpNode and subclasses include all data inputs (until hitting a control

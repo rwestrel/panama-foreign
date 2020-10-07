@@ -33,6 +33,7 @@ import jdk.internal.access.foreign.UnmapperProxy;
 import jdk.internal.misc.ScopedMemoryAccess;
 import jdk.internal.misc.Unsafe;
 import jdk.internal.util.ArraysSupport;
+import jdk.internal.util.Preconditions;
 import jdk.internal.vm.annotation.ForceInline;
 import sun.security.action.GetPropertyAction;
 
@@ -422,11 +423,15 @@ public abstract class AbstractMemorySegmentImpl implements MemorySegment, Memory
         if (isSmall()) {
             checkBoundsSmall((int)offset, (int)length);
         } else {
-            if (length < 0 ||
-                    offset < 0 ||
-                    offset > this.length - length) { // careful of overflow
+            if (length < 0) {
                 throw outOfBoundException(offset, length);
             }
+            Preconditions.checkLongIndex(offset, this.length - length + 1, (s, args) -> outOfBoundException(offset, length));
+//            if (length < 0 ||
+//                    offset < 0 ||
+//                    offset > this.length - length) { // careful of overflow
+//                throw outOfBoundException(offset, length);
+//            }
         }
     }
 

@@ -538,7 +538,7 @@ static bool condition_stride_ok(BoolTest::mask bt, jlong stride_con) {
   return true;
 }
 
-void PhaseIdealLoop::long_loop_replace_long_iv(Node* iv_to_replace, Node* inner_iv, Node* outer_phi, Node* inner_head) {
+Node * PhaseIdealLoop::long_loop_replace_long_iv(Node* iv_to_replace, Node* inner_iv, Node* outer_phi, Node* inner_head) {
   Node* iv_as_long = new ConvI2LNode(inner_iv, TypeLong::INT);
   register_new_node(iv_as_long, inner_head);
   Node* iv_replacement = new AddLNode(outer_phi, iv_as_long);
@@ -559,6 +559,7 @@ void PhaseIdealLoop::long_loop_replace_long_iv(Node* iv_to_replace, Node* inner_
     int nb = u->replace_edge(iv_to_replace, iv_replacement);
     i -= nb;
   }
+  return iv_replacement;
 }
 
 void PhaseIdealLoop::add_empty_predicate(Deoptimization::DeoptReason reason, Node* inner_head, IdealLoopTree* loop, SafePointNode* sfpt) {
@@ -797,6 +798,11 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
     return false; // Avoid pointer & float & 32-bit compares
   }
   
+  // Trip-counter increment must be commutative & associative.
+  if (incr->Opcode() == Op_CastLL) {
+    incr = incr->in(1);
+  }
+
   Node* phi_incr = NULL;
   incr = loop_iv_incr(incr, x, loop, phi_incr);
   if (incr == NULL || incr->Opcode() != Op_AddL) {
@@ -810,6 +816,10 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
     return false;
   }
   
+  if (xphi->Opcode() == Op_CastLL) {
+    xphi = xphi->in(1);
+  }
+
 #ifndef PRODUCT
   Atomic::inc(&_long_loop_candidates);
 #endif
@@ -899,6 +909,38 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
     }
   }
 
+//  os::message_box("xxx", "yyy");
+
+  const jlong min_iters = 10000;
+  jlong iters_limit_as_long = iters_limit;
+  jlong max_scale = 1;
+  Node* c = back_control;
+  Node_List range_checks;
+  while (c != x) {
+    if (c->is_IfProj() && c->in(0)->is_RangeCheck()) {
+      CallStaticJavaNode* call = c->as_IfProj()->is_uncommon_trap_if_pattern(Deoptimization::Reason_none);
+      if (call != NULL && !C->too_many_traps_or_recompiles(call->jvms()->method(), call->jvms()->bci(), Deoptimization::Reason_long_range_check)) {
+        Node* range = NULL;
+        Node* offset = NULL;
+        jlong scale = 0;
+        RangeCheckNode* rc = c->in(0)->as_RangeCheck();
+        if (loop->is_range_check_if(rc, this, T_LONG, phi, range, offset, scale) &&
+            loop->is_invariant(range) && loop->is_invariant(offset) && _igvn.type(offset)->is_zero_type()) {
+          if (scale > 0 && iters_limit_as_long / scale > min_iters && (offset == NULL || _igvn.type(offset)->is_long()->_hi >= 0)) {
+            max_scale = MAX2(max_scale, scale);
+            range_checks.push(c);
+          }
+        }
+      }
+    }
+    c = idom(c);
+  }
+
+  iters_limit_as_long = iters_limit_as_long / max_scale;
+  assert(iters_limit_as_long >= min_iters, "too few iterations");
+  assert((long)((int)iters_limit_as_long) == iters_limit_as_long, "not an int");
+  iters_limit = (int) iters_limit_as_long;
+
   // Clone the control flow of the loop to build an outer loop
   Node* outer_back_branch = new IfTrueNode(exit_test); // outer exit not created yet
   Node* inner_exit_branch = exit_branch->clone();
@@ -956,6 +998,10 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
     adjusted_limit = new AddLNode(limit, long_stride);
     _igvn.register_new_node_with_optimizer(adjusted_limit);
   }
+
+  bool delay_transform = _igvn.delay_transform();
+  _igvn.set_delay_transform(true);
+  
   Node* inner_iters_max = NULL;
   if (stride_con > 0) {
     inner_iters_max = MaxNode::max_diff_with_zero(adjusted_limit, outer_phi, TypeLong::LONG, _igvn);
@@ -969,6 +1015,8 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   // min.
   Node* inner_iters_actual = MaxNode::unsigned_min(inner_iters_max, inner_iters_limit, TypeLong::make(0, iters_limit, Type::WidenMin), _igvn);
 
+  _igvn.set_delay_transform(delay_transform);
+  
   Node* inner_iters_actual_int = new ConvL2INode(inner_iters_actual);
   _igvn.register_new_node_with_optimizer(inner_iters_actual_int);
 
@@ -1049,7 +1097,7 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
 
   // Replace inner loop long iv phi as inner loop int iv phi + outer
   // loop iv phi
-  long_loop_replace_long_iv(phi, inner_phi, outer_phi, inner_head);
+  Node* iv_add = long_loop_replace_long_iv(phi, inner_phi, outer_phi, inner_head);
 
   // Replace inner loop long iv incr with inner loop int incr + outer
   // loop iv phi
@@ -1117,7 +1165,6 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   // positioned safepoint peel to guarantee a safepoint in the outer
   // loop.
 
-  C->print_method(PHASE_DEBUG, 2);
   assert(outer_phi->as_Phi()->is_long_tripcount(), "");
 
   Node* outer_incr = outer_head->incr()->clone();
@@ -1126,6 +1173,91 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   assert(outer_phi->in(2) == outer_head->incr(), "");
   _igvn.replace_input_of(outer_cmp, 1, outer_incr);
   _igvn.replace_input_of(outer_phi, 2, outer_incr);
+
+  for (uint i = 0; i < range_checks.size(); i++) {
+    ProjNode* proj = range_checks.at(i)->as_Proj();
+    RangeCheckNode* rc = proj->in(0)->as_RangeCheck();
+    jlong scale = 0;
+    Node* offset = NULL;
+    Node* rc_bol = rc->in(1);
+    Node* rc_cmp = rc_bol->in(1);
+    bool ok = is_scaled_iv_plus_offset(rc_cmp->in(1), iv_add, &scale, &offset, T_LONG);
+    assert(ok, "inconsistent: was tested before");
+    Node* range = rc_cmp->in(2);
+    Node* c = rc->in(0);
+    Node* scale_node = _igvn.longcon(scale);
+    set_ctrl(scale_node, C->root());
+    Node* mul = new MulLNode(outer_phi, scale_node);
+    register_new_node(mul, c);
+    Node* new_range = new SubLNode(range, mul);
+    register_new_node(new_range, c);
+    Node* max = _igvn.longcon(max_jint);
+    set_ctrl(max, C->root());
+    Node* check = new CmpULNode(new_range, max);
+    register_new_node(check, c);
+    Node* bol = new BoolNode(check, BoolTest::le);
+    register_new_node(bol, c);
+    IfNode* iff = new IfNode(c, bol, rc->_prob, rc->_fcnt);
+    register_control(iff, loop, c);
+    Node* iff_true = new IfTrueNode(iff);
+    register_control(iff_true, loop, iff);
+    Node* iff_false = new IfFalseNode(iff);
+    register_control(iff_false, _ltree_root, iff);
+    _igvn.replace_input_of(rc, 0, iff_true);
+    set_idom(rc, iff_true, dom_depth(rc));
+
+    int trap_request = Deoptimization::make_trap_request(Deoptimization::Reason_long_range_check, Deoptimization::Action_make_not_entrant);
+    address call_addr = SharedRuntime::uncommon_trap_blob()->entry_point();
+    const TypePtr* no_memory_effects = NULL;
+    CallStaticJavaNode* call = proj->is_uncommon_trap_if_pattern(Deoptimization::Reason_none);
+
+    JVMState* jvms = call->jvms();
+    CallNode* unc = new CallStaticJavaNode(OptoRuntime::uncommon_trap_Type(), call_addr, "uncommon_trap",
+                                           jvms->bci(), no_memory_effects);
+
+    Node* mem = NULL;
+    Node* i_o = NULL;
+    mem = call->memory();
+    i_o = call->i_o();
+
+    Node *frame = new ParmNode(C->start(), TypeFunc::FramePtr);
+    register_new_node(frame, C->start());
+    Node *ret = new ParmNode(C->start(), TypeFunc::ReturnAdr);
+    register_new_node(ret, C->start());
+
+    unc->init_req(TypeFunc::Control, iff_false);
+    unc->init_req(TypeFunc::I_O, i_o);
+    unc->init_req(TypeFunc::Memory, mem); // may gc ptrs
+    unc->init_req(TypeFunc::FramePtr, frame);
+    unc->init_req(TypeFunc::ReturnAdr, ret);
+    unc->init_req(TypeFunc::Parms+0, _igvn.intcon(trap_request));
+    unc->set_cnt(PROB_UNLIKELY_MAG(4));
+    unc->copy_call_debug_info(&_igvn, call);
+
+    for (uint i = TypeFunc::Parms; i < unc->req(); i++) {
+      set_subtree_ctrl(unc->in(i));
+    }
+    register_control(unc, _ltree_root, iff_false);
+
+    Node* ctrl = new ProjNode(unc, TypeFunc::Control);
+    register_control(ctrl, _ltree_root, unc);
+    Node* halt = new HaltNode(ctrl, frame, "uncommon trap returned which should never happen" PRODUCT_ONLY(COMMA /*reachable*/false));
+    register_control(halt, _ltree_root, ctrl);
+    C->root()->add_req(halt);
+
+    Node* new_range_int = new ConvL2INode(new_range, TypeInt::POS);
+    register_new_node(new_range_int, c);
+    Node* int_scale_node = _igvn.intcon((int)scale);
+    set_ctrl(int_scale_node, C->root());
+    Node* scaled_phi = new MulINode(inner_phi, int_scale_node);
+    register_new_node(scaled_phi, c);
+
+    Node* new_rc_cmp = new CmpUNode(scaled_phi, new_range_int);
+    register_new_node(new_rc_cmp, c);
+    _igvn.replace_input_of(rc_bol, 1, new_rc_cmp);
+  }
+
+  C->print_method(PHASE_DEBUG, 2);
 
   if (safepoint != NULL || !loop->_has_call) {
     old_new.clear();
@@ -1148,7 +1280,6 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   Atomic::inc(&_long_loop_nests);
 #endif
 
-  C->print_method(PHASE_DEBUG, 2);
   assert(outer_phi->as_Phi()->is_long_tripcount(), "");
   inner_head->mark_transformed_long_loop();
   
@@ -2508,7 +2639,7 @@ void OuterStripMinedLoopNode::adjust_strip_mined_loop(PhaseIterGVN* igvn) {
   if (iv_phi != NULL) {
     // Now adjust the inner loop's exit condition
     Node* limit = inner_cl->limit();
-    // If limit < init for stride > 0 (or limit > init for stride 0),
+    // If limit < init for stride > 0 (or limit > init for stride < 0),
     // the loop body is run only once. Given limit - init (init - limit resp.)
     // would be negative, the unsigned comparison below would cause
     // the loop body to be run for LoopStripMiningIter.
@@ -4032,11 +4163,6 @@ void PhaseIdealLoop::build_and_optimize(LoopOptsMode mode) {
     return;
   }
 
-  for (LoopTreeIterator iter(_ltree_root); !iter.done(); iter.next()) {
-    IdealLoopTree* lpt = iter.current();
-    is_long_counted_loop(lpt->_head, lpt, worklist);
-  }
-
   if (ReassociateInvariants && !C->major_progress()) {
     // Reassociate invariants and prep for split_thru_phi
     for (LoopTreeIterator iter(_ltree_root); !iter.done(); iter.next()) {
@@ -4102,6 +4228,13 @@ void PhaseIdealLoop::build_and_optimize(LoopOptsMode mode) {
   }
   // Do verify graph edges in any case
   NOT_PRODUCT( C->verify_graph_edges(); );
+
+  if (C->has_loops() && !C->major_progress()) {
+    for (LoopTreeIterator iter(_ltree_root); !iter.done(); iter.next()) {
+      IdealLoopTree *lpt = iter.current();
+      is_long_counted_loop(lpt->_head, lpt, worklist);
+    }
+  }
 
   if (!do_split_ifs) {
     // We saw major progress in Split-If to get here.  We forced a
