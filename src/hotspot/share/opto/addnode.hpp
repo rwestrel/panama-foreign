@@ -68,6 +68,7 @@ public:
   // Supplied function to return the additive identity type
   virtual const Type *add_id() const = 0;
 
+  static AddNode* make(Node* in1, Node* in2, BasicType bt);
 };
 
 //------------------------------AddINode---------------------------------------

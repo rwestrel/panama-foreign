@@ -68,6 +68,7 @@ class Deoptimization : AllStatic {
     Reason_optimized_type_check   = Reason_bimorphic,
 #endif
 
+    Reason_long_range_check,
     Reason_profile_predicate,     // compiler generated predicate moved from frequent branch in a loop failed
 
     // recorded per method

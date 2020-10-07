@@ -240,6 +240,17 @@ const Type *AddNode::add_of_identity( const Type *t1, const Type *t2 ) const {
   return NULL;
 }
 
+AddNode* AddNode::make(Node* in1, Node* in2, BasicType bt) {
+  switch (bt) {
+    case T_INT:
+      return new AddINode(in1, in2);
+    case T_LONG:
+      return new AddLNode(in1, in2);
+    default:
+      fatal("Not implemented for %s", type2name(bt));
+  }
+  return NULL;
+}
 
 //=============================================================================
 //------------------------------Idealize---------------------------------------

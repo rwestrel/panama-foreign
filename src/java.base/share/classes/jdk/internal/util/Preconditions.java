@@ -64,10 +64,29 @@ public class Preconditions {
                ? new IndexOutOfBoundsException(outOfBoundsMessage(checkKind, largs)) : e;
     }
 
+    private static RuntimeException outOfBoundsLong(
+            BiFunction<String, List<Long>, ? extends RuntimeException> oobef,
+            String checkKind,
+            Long... args) {
+        List<Long> largs = List.of(args);
+        RuntimeException e = oobef == null
+                             ? null : oobef.apply(checkKind, largs);
+        return e == null
+               ? new IndexOutOfBoundsException(outOfBoundsMessage(checkKind, largs)) : e;
+    }
+
     private static RuntimeException outOfBoundsCheckIndex(
             BiFunction<String, List<Integer>, ? extends RuntimeException> oobe,
             int index, int length) {
+        final List<Integer> list = List.of(index, length);
+        List<? extends Number> list2 = list;
         return outOfBounds(oobe, "checkIndex", index, length);
+    }
+
+    private static RuntimeException outOfBoundsCheckLongIndex(
+            BiFunction<String, List<Long>, ? extends RuntimeException> oobe,
+            long index, long length) {
+        return outOfBoundsLong(oobe, "checkIndex", index, length);
     }
 
     private static RuntimeException outOfBoundsCheckFromToIndex(
@@ -161,7 +180,7 @@ public class Preconditions {
         };
     }
 
-    private static String outOfBoundsMessage(String checkKind, List<Integer> args) {
+    private static String outOfBoundsMessage(String checkKind, List<? extends Number> args) {
         if (checkKind == null && args == null) {
             return String.format("Range check failed");
         } else if (checkKind == null) {
@@ -246,6 +265,15 @@ public class Preconditions {
                    BiFunction<String, List<Integer>, X> oobef) {
         if (index < 0 || index >= length)
             throw outOfBoundsCheckIndex(oobef, index, length);
+        return index;
+    }
+
+    @HotSpotIntrinsicCandidate
+    public static <X extends RuntimeException>
+    long checkLongIndex(long index, long length,
+                   BiFunction<String, List<Long>, X> oobef) {
+        if (index < 0 || index >= length)
+            throw outOfBoundsCheckLongIndex(oobef, index, length);
         return index;
     }
 

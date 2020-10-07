@@ -128,7 +128,7 @@ public class LoopOverNonConstant {
     @Benchmark
     public int segment_loop() {
         int sum = 0;
-        for (int i = 0; i < ELEM_SIZE; i++) {
+        for (long i = 0; i < ELEM_SIZE; i++) {
             sum += (int) VH_int.get(segment, (long) i);
         }
         return sum;
