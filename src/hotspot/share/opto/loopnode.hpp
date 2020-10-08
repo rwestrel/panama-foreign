@@ -881,8 +881,8 @@ public:
   Node *get_late_ctrl( Node *n, Node *early );
   Node *get_early_ctrl( Node *n );
   Node *get_early_ctrl_for_expensive(Node *n, Node* earliest);
-  void set_early_ctrl( Node *n );
-  void set_subtree_ctrl( Node *root );
+  void set_early_ctrl(Node* n, bool update_body);
+  void set_subtree_ctrl(Node* root, bool update_body);
   void set_ctrl( Node *n, Node *ctrl ) {
     assert( !has_node(n) || has_ctrl(n), "" );
     assert( ctrl->in(0), "cannot set dead control node" );

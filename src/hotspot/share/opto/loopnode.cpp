@@ -33,6 +33,7 @@
 #include "opto/addnode.hpp"
 #include "opto/arraycopynode.hpp"
 #include "opto/callnode.hpp"
+#include "opto/castnode.hpp"
 #include "opto/connode.hpp"
 #include "opto/convertnode.hpp"
 #include "opto/divnode.hpp"
@@ -242,28 +243,32 @@ Node *PhaseIdealLoop::get_early_ctrl_for_expensive(Node *n, Node* earliest) {
 
 //------------------------------set_early_ctrl---------------------------------
 // Set earliest legal control
-void PhaseIdealLoop::set_early_ctrl( Node *n ) {
+void PhaseIdealLoop::set_early_ctrl(Node* n, bool update_body) {
   Node *early = get_early_ctrl(n);
 
   // Record earliest legal location
   set_ctrl(n, early);
+  IdealLoopTree *loop = get_loop(early);
+  if (update_body && loop->_child == NULL) {
+    loop->_body.push(n);
+  }
 }
 
 //------------------------------set_subtree_ctrl-------------------------------
 // set missing _ctrl entries on new nodes
-void PhaseIdealLoop::set_subtree_ctrl( Node *n ) {
+void PhaseIdealLoop::set_subtree_ctrl(Node* root, bool update_body) {
   // Already set?  Get out.
-  if( _nodes[n->_idx] ) return;
+  if (_nodes[root->_idx]) return;
   // Recursively set _nodes array to indicate where the Node goes
   uint i;
-  for( i = 0; i < n->req(); ++i ) {
-    Node *m = n->in(i);
-    if( m && m != C->root() )
-      set_subtree_ctrl( m );
+  for (i = 0; i < root->req(); ++i) {
+    Node *m = root->in(i);
+    if (m && m != C->root())
+      set_subtree_ctrl(m, update_body);
   }
 
   // Fixup self
-  set_early_ctrl( n );
+  set_early_ctrl(root, update_body);
 }
 
 IdealLoopTree* PhaseIdealLoop::insert_outer_loop(IdealLoopTree* loop, LoopNode* outer_l, Node* outer_ift) {
@@ -345,7 +350,7 @@ void PhaseIdealLoop::insert_loop_limit_check(ProjNode* limit_check_proj, Node* c
   assert(opaq->Opcode() == Op_Opaque1, "bad graph shape");
   cmp_limit = _igvn.register_new_node_with_optimizer(cmp_limit);
   bol = _igvn.register_new_node_with_optimizer(bol);
-  set_subtree_ctrl(bol);
+  set_subtree_ctrl(bol, false);
   _igvn.replace_input_of(iff, 1, bol);
 
 #ifndef PRODUCT
@@ -569,7 +574,7 @@ void PhaseIdealLoop::add_empty_predicate(Deoptimization::DeoptReason reason, Nod
     _igvn.register_new_node_with_optimizer(opq);
     Node *bol = new Conv2BNode(opq);
     _igvn.register_new_node_with_optimizer(bol);
-    set_subtree_ctrl(bol);
+    set_subtree_ctrl(bol, false);
     IfNode* iff = new IfNode(inner_head->in(LoopNode::EntryControl), bol, PROB_MAX, COUNT_UNKNOWN);
     register_control(iff, loop, inner_head->in(LoopNode::EntryControl));
     Node* iffalse = new IfFalseNode(iff);
@@ -610,7 +615,7 @@ void PhaseIdealLoop::add_empty_predicate(Deoptimization::DeoptReason reason, Nod
     unc->copy_call_debug_info(&_igvn, sfpt);
 
     for (uint i = TypeFunc::Parms; i < unc->req(); i++) {
-      set_subtree_ctrl(unc->in(i));
+      set_subtree_ctrl(unc->in(i), false);
     }
     register_control(unc, _ltree_root, iffalse);
     
@@ -926,7 +931,7 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
         RangeCheckNode* rc = c->in(0)->as_RangeCheck();
         if (loop->is_range_check_if(rc, this, T_LONG, phi, range, offset, scale) &&
             loop->is_invariant(range) && loop->is_invariant(offset) && _igvn.type(offset)->is_zero_type()) {
-          if (scale > 0 && iters_limit_as_long / scale > min_iters && (offset == NULL || _igvn.type(offset)->is_long()->_hi >= 0)) {
+          if (scale * stride_con > 0 && iters_limit_as_long / ABS(scale) > min_iters ) {
             max_scale = MAX2(max_scale, scale);
             range_checks.push(c);
           }
@@ -1103,7 +1108,7 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
   // loop iv phi
   long_loop_replace_long_iv(incr, inner_incr, outer_phi, inner_head);
 
-  set_subtree_ctrl(inner_iters_actual_int);
+  set_subtree_ctrl(inner_iters_actual_int, false);
 
   // Summary of steps from inital loop to loop nest:
   //
@@ -1176,6 +1181,7 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
 
   for (uint i = 0; i < range_checks.size(); i++) {
     ProjNode* proj = range_checks.at(i)->as_Proj();
+    ProjNode* unc_proj = proj->other_if_proj();
     RangeCheckNode* rc = proj->in(0)->as_RangeCheck();
     jlong scale = 0;
     Node* offset = NULL;
@@ -1185,76 +1191,134 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
     assert(ok, "inconsistent: was tested before");
     Node* range = rc_cmp->in(2);
     Node* c = rc->in(0);
-    Node* scale_node = _igvn.longcon(scale);
-    set_ctrl(scale_node, C->root());
-    Node* mul = new MulLNode(outer_phi, scale_node);
-    register_new_node(mul, c);
-    Node* new_range = new SubLNode(range, mul);
-    register_new_node(new_range, c);
-    Node* max = _igvn.longcon(max_jint);
-    set_ctrl(max, C->root());
-    Node* check = new CmpULNode(new_range, max);
-    register_new_node(check, c);
-    Node* bol = new BoolNode(check, BoolTest::le);
-    register_new_node(bol, c);
-    IfNode* iff = new IfNode(c, bol, rc->_prob, rc->_fcnt);
-    register_control(iff, loop, c);
-    Node* iff_true = new IfTrueNode(iff);
-    register_control(iff_true, loop, iff);
-    Node* iff_false = new IfFalseNode(iff);
-    register_control(iff_false, _ltree_root, iff);
-    _igvn.replace_input_of(rc, 0, iff_true);
-    set_idom(rc, iff_true, dom_depth(rc));
-
-    int trap_request = Deoptimization::make_trap_request(Deoptimization::Reason_long_range_check, Deoptimization::Action_make_not_entrant);
-    address call_addr = SharedRuntime::uncommon_trap_blob()->entry_point();
-    const TypePtr* no_memory_effects = NULL;
     CallStaticJavaNode* call = proj->is_uncommon_trap_if_pattern(Deoptimization::Reason_none);
+    Node* entry_control = inner_head->in(LoopNode::EntryControl);
 
-    JVMState* jvms = call->jvms();
-    CallNode* unc = new CallStaticJavaNode(OptoRuntime::uncommon_trap_Type(), call_addr, "uncommon_trap",
-                                           jvms->bci(), no_memory_effects);
+    Node* new_proj = proj->clone();
+    Node* new_unc_proj = unc_proj->clone();
+    Node* new_rc = rc->clone();
+    Node* new_rc_bol = rc_bol->clone();
 
-    Node* mem = NULL;
-    Node* i_o = NULL;
-    mem = call->memory();
-    i_o = call->i_o();
+    new_proj->set_req(0, new_rc);
+    new_unc_proj->set_req(0, new_rc);
+    new_rc->set_req(1, new_rc_bol);
+    new_rc->set_req(0, c);
+    Node* scale_node = _igvn.longcon(scale);
+    Node* mul = new MulLNode(outer_phi, scale_node);
+    Node* add = new AddLNode(mul, offset);
+    _igvn.replace_input_of(rc_cmp, 1, add);
 
-    Node *frame = new ParmNode(C->start(), TypeFunc::FramePtr);
-    register_new_node(frame, C->start());
-    Node *ret = new ParmNode(C->start(), TypeFunc::ReturnAdr);
-    register_new_node(ret, C->start());
+    register_control(new_rc, loop, c);
+    register_control(new_proj, loop, new_rc);
+    register_control(new_unc_proj, _ltree_root, new_rc);
+    register_new_node(new_rc_bol, entry_control);
+    set_ctrl(scale_node, C->root());
+    register_new_node(mul, entry_control);
+    register_new_node(add, entry_control);
+    set_ctrl_and_loop(rc_cmp, entry_control);
 
-    unc->init_req(TypeFunc::Control, iff_false);
-    unc->init_req(TypeFunc::I_O, i_o);
-    unc->init_req(TypeFunc::Memory, mem); // may gc ptrs
-    unc->init_req(TypeFunc::FramePtr, frame);
-    unc->init_req(TypeFunc::ReturnAdr, ret);
-    unc->init_req(TypeFunc::Parms+0, _igvn.intcon(trap_request));
-    unc->set_cnt(PROB_UNLIKELY_MAG(4));
-    unc->copy_call_debug_info(&_igvn, call);
+    RegionNode* r = new RegionNode(3);
+    r->init_req(1, unc_proj);
+    r->init_req(2, new_unc_proj);
+    register_control(r, _ltree_root, new_rc);
+    _igvn.replace_input_of(call, 0, r);
+    set_idom(call, r, dom_depth(call));
 
-    for (uint i = TypeFunc::Parms; i < unc->req(); i++) {
-      set_subtree_ctrl(unc->in(i));
-    }
-    register_control(unc, _ltree_root, iff_false);
+    Node* casted_add = new CastLLNode(add, TypeLong::POS);
+    casted_add->set_req(0, new_proj);
+    Node* max = _igvn.longcon(max_jint);
+    Node* sub = new SubLNode(range, casted_add);
 
-    Node* ctrl = new ProjNode(unc, TypeFunc::Control);
-    register_control(ctrl, _ltree_root, unc);
-    Node* halt = new HaltNode(ctrl, frame, "uncommon trap returned which should never happen" PRODUCT_ONLY(COMMA /*reachable*/false));
-    register_control(halt, _ltree_root, ctrl);
-    C->root()->add_req(halt);
+    register_new_node(casted_add, new_proj);
+    set_ctrl(max, C->root());
+    register_new_node(sub, new_proj);
 
-    Node* new_range_int = new ConvL2INode(new_range, TypeInt::POS);
-    register_new_node(new_range_int, c);
+    Node* new_range = MaxNode::signed_min(sub, max, TypeLong::make(0, max_jint, Type::WidenMin), _igvn);
+    Node* int_range = new ConvL2INode(new_range, TypeInt::POS);
     Node* int_scale_node = _igvn.intcon((int)scale);
-    set_ctrl(int_scale_node, C->root());
-    Node* scaled_phi = new MulINode(inner_phi, int_scale_node);
-    register_new_node(scaled_phi, c);
+    Node* scaled_iv = new MulINode(inner_phi, int_scale_node);
+    Node* new_rc_cmp = new CmpUNode(inner_phi, int_range);
 
-    Node* new_rc_cmp = new CmpUNode(scaled_phi, new_range_int);
-    register_new_node(new_rc_cmp, c);
+    _igvn.replace_input_of(rc, 0, new_proj);
     _igvn.replace_input_of(rc_bol, 1, new_rc_cmp);
+    set_subtree_ctrl(new_range, true);
+    register_new_node(int_range, new_proj);
+    set_ctrl(int_scale_node, C->root());
+    register_new_node(scaled_iv, new_proj);
+    register_new_node(new_rc_cmp, new_proj);
+    set_ctrl(rc_bol, new_proj);
+    set_idom(rc, new_proj, dom_depth(rc));
+
+
+//    Node* scale_node = _igvn.longcon(scale);
+//    set_ctrl(scale_node, C->root());
+//    Node* mul = new MulLNode(outer_phi, scale_node);
+//    register_new_node(mul, c);
+//    Node* new_range = new SubLNode(range, mul);
+//    register_new_node(new_range, c);
+//    Node* max = _igvn.longcon(max_jint);
+//    set_ctrl(max, C->root());
+//    Node* check = new CmpULNode(new_range, max);
+//    register_new_node(check, c);
+//    Node* bol = new BoolNode(check, BoolTest::le);
+//    register_new_node(bol, c);
+//    IfNode* iff = new IfNode(c, bol, rc->_prob, rc->_fcnt);
+//    register_control(iff, loop, c);
+//    Node* iff_true = new IfTrueNode(iff);
+//    register_control(iff_true, loop, iff);
+//    Node* iff_false = new IfFalseNode(iff);
+//    register_control(iff_false, _ltree_root, iff);
+//    _igvn.replace_input_of(rc, 0, iff_true);
+//    set_idom(rc, iff_true, dom_depth(rc));
+//
+//    int trap_request = Deoptimization::make_trap_request(Deoptimization::Reason_long_range_check, Deoptimization::Action_make_not_entrant);
+//    address call_addr = SharedRuntime::uncommon_trap_blob()->entry_point();
+//    const TypePtr* no_memory_effects = NULL;
+//
+//    JVMState* jvms = call->jvms();
+//    CallNode* unc = new CallStaticJavaNode(OptoRuntime::uncommon_trap_Type(), call_addr, "uncommon_trap",
+//                                           jvms->bci(), no_memory_effects);
+//
+//    Node* mem = NULL;
+//    Node* i_o = NULL;
+//    mem = call->memory();
+//    i_o = call->i_o();
+//
+//    Node *frame = new ParmNode(C->start(), TypeFunc::FramePtr);
+//    register_new_node(frame, C->start());
+//    Node *ret = new ParmNode(C->start(), TypeFunc::ReturnAdr);
+//    register_new_node(ret, C->start());
+//
+//    unc->init_req(TypeFunc::Control, iff_false);
+//    unc->init_req(TypeFunc::I_O, i_o);
+//    unc->init_req(TypeFunc::Memory, mem); // may gc ptrs
+//    unc->init_req(TypeFunc::FramePtr, frame);
+//    unc->init_req(TypeFunc::ReturnAdr, ret);
+//    unc->init_req(TypeFunc::Parms+0, _igvn.intcon(trap_request));
+//    unc->set_cnt(PROB_UNLIKELY_MAG(4));
+//    unc->copy_call_debug_info(&_igvn, call);
+//
+//    for (uint i = TypeFunc::Parms; i < unc->req(); i++) {
+//      set_subtree_ctrl(unc->in(i));
+//    }
+//    register_control(unc, _ltree_root, iff_false);
+//
+//    Node* ctrl = new ProjNode(unc, TypeFunc::Control);
+//    register_control(ctrl, _ltree_root, unc);
+//    Node* halt = new HaltNode(ctrl, frame, "uncommon trap returned which should never happen" PRODUCT_ONLY(COMMA /*reachable*/false));
+//    register_control(halt, _ltree_root, ctrl);
+//    C->root()->add_req(halt);
+//
+//    Node* new_range_int = new ConvL2INode(new_range, TypeInt::POS);
+//    register_new_node(new_range_int, c);
+//    Node* int_scale_node = _igvn.intcon((int)scale);
+//    set_ctrl(int_scale_node, C->root());
+//    Node* scaled_phi = new MulINode(inner_phi, int_scale_node);
+//    register_new_node(scaled_phi, c);
+//
+//    Node* new_rc_cmp = new CmpUNode(scaled_phi, new_range_int);
+//    register_new_node(new_rc_cmp, c);
+//    _igvn.replace_input_of(rc_bol, 1, new_rc_cmp);
   }
 
   C->print_method(PHASE_DEBUG, 2);
@@ -1357,7 +1421,7 @@ bool PhaseIdealLoop::convert_to_long_loop(Node* cmp, Node* phi, IdealLoopTree* l
         assert(_igvn.type(in)->isa_int(), "");
         in_clone = new ConvI2LNode(in);
         _igvn.register_new_node_with_optimizer(in_clone);
-        set_subtree_ctrl(in_clone);
+        set_subtree_ctrl(in_clone, false);
       }
       if (in_clone->in(0) == NULL) {
         in_clone->set_req(0, C->top());
@@ -1374,7 +1438,7 @@ bool PhaseIdealLoop::convert_to_long_loop(Node* cmp, Node* phi, IdealLoopTree* l
   for (uint i = 0; i < iv_nodes.size(); i++) {
     Node* n = iv_nodes.at(i);
     Node* clone = old_new[n->_idx];
-    set_subtree_ctrl(clone);
+    set_subtree_ctrl(clone, false);
     Node* m = n->Opcode() == Op_CmpI ? clone : NULL;
     for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
       Node* u = n->fast_out(i);
@@ -1384,7 +1448,7 @@ bool PhaseIdealLoop::convert_to_long_loop(Node* cmp, Node* phi, IdealLoopTree* l
       if (m == NULL) {
         m = new ConvL2INode(clone);
         _igvn.register_new_node_with_optimizer(m);
-        set_subtree_ctrl(m);
+        set_subtree_ctrl(m, false);
       }
       _igvn.rehash_node_delayed(u);
       int nb = u->replace_edge(n, m);
@@ -1727,7 +1791,7 @@ bool PhaseIdealLoop::is_counted_loop(Node* x, IdealLoopTree*& loop) {
     else
       ShouldNotReachHere();
   }
-  set_subtree_ctrl(adjusted_limit);
+  set_subtree_ctrl(adjusted_limit, false);
 
   if (LoopStripMiningIter == 0) {
     // Check for SafePoint on backedge and remove
@@ -1747,7 +1811,7 @@ bool PhaseIdealLoop::is_counted_loop(Node* x, IdealLoopTree*& loop) {
   incr->set_req(1,phi);
   incr->set_req(2,stride);
   incr = _igvn.register_new_node_with_optimizer(incr);
-  set_early_ctrl( incr );
+  set_early_ctrl(incr, false);
   _igvn.rehash_node_delayed(phi);
   phi->set_req_X( LoopNode::LoopBackControl, incr, &_igvn );
 
@@ -3431,10 +3495,10 @@ void PhaseIdealLoop::replace_parallel_iv(IdealLoopTree *loop) {
       set_ctrl(ratio, C->root());
       Node* ratio_init = new MulINode(init, ratio);
       _igvn.register_new_node_with_optimizer(ratio_init, init);
-      set_early_ctrl(ratio_init);
+      set_early_ctrl(ratio_init, false);
       Node* diff = new SubINode(init2, ratio_init);
       _igvn.register_new_node_with_optimizer(diff, init2);
-      set_early_ctrl(diff);
+      set_early_ctrl(diff, false);
       Node* ratio_idx = new MulINode(phi, ratio);
       _igvn.register_new_node_with_optimizer(ratio_idx, phi);
       set_ctrl(ratio_idx, cl);
@@ -5003,7 +5067,7 @@ void PhaseIdealLoop::build_loop_early( VectorSet &visited, Node_List &worklist, 
         // CFG, Phi, pinned nodes already know their controlling input.
         if (!has_node(n)) {
           // Record earliest legal location
-          set_early_ctrl( n );
+          set_early_ctrl(n, false);
         }
         if (nstack.is_empty()) {
           // Finished all nodes on stack.

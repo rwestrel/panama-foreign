@@ -286,7 +286,7 @@ void PhaseIdealLoop::dominated_by( Node *prevdom, Node *iff, bool flip, bool exc
     if (cd->depends_only_on_test()) {
       assert(cd->in(0) == dp, "");
       _igvn.replace_input_of(cd, 0, prevdom);
-      set_early_ctrl(cd);
+      set_early_ctrl(cd, false);
       IdealLoopTree *new_loop = get_loop(get_ctrl(cd));
       if (old_loop != new_loop) {
         if (!old_loop->_child) old_loop->_body.yank(cd);

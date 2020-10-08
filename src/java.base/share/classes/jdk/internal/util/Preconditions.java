@@ -268,7 +268,7 @@ public class Preconditions {
         return index;
     }
 
-    @HotSpotIntrinsicCandidate
+    @IntrinsicCandidate
     public static <X extends RuntimeException>
     long checkLongIndex(long index, long length,
                    BiFunction<String, List<Long>, X> oobef) {
