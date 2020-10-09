@@ -781,7 +781,8 @@ SafePointNode* PhaseIdealLoop::find_safepoint(Node* back_control, Node* x, Ideal
 //     continue;
 //   else break;
 // }
-bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_List &old_new) {
+bool PhaseIdealLoop::is_long_counted_loop(IdealLoopTree* loop, Node_List &old_new, bool transform) {
+  Node* x = loop->_head;
   // Only for inner loops
   if (loop->_child != NULL) {
     return false;
@@ -912,6 +913,10 @@ bool PhaseIdealLoop::is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_Lis
       }
       limit_check_required = true;
     }
+  }
+
+  if (!transform) {
+    return true;
   }
 
 //  os::message_box("xxx", "yyy");
@@ -4231,6 +4236,9 @@ void PhaseIdealLoop::build_and_optimize(LoopOptsMode mode) {
     // Reassociate invariants and prep for split_thru_phi
     for (LoopTreeIterator iter(_ltree_root); !iter.done(); iter.next()) {
       IdealLoopTree* lpt = iter.current();
+      if (is_long_counted_loop(lpt, worklist, false)) {
+        lpt->_long_counted_loop_candidate = 1;
+      }
       bool is_counted = lpt->is_counted();
       if (!is_counted || !lpt->is_innermost()) continue;
 
@@ -4296,7 +4304,7 @@ void PhaseIdealLoop::build_and_optimize(LoopOptsMode mode) {
   if (C->has_loops() && !C->major_progress()) {
     for (LoopTreeIterator iter(_ltree_root); !iter.done(); iter.next()) {
       IdealLoopTree *lpt = iter.current();
-      is_long_counted_loop(lpt->_head, lpt, worklist);
+      is_long_counted_loop(lpt, worklist, true);
     }
   }
 

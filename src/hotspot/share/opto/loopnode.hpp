@@ -557,7 +557,8 @@ public:
   uint8_t _irreducible:1,       // True if irreducible
           _has_call:1,          // True if has call safepoint
           _has_sfpt:1,          // True if has non-call safepoint
-          _rce_candidate:1;     // True if candidate for range check elimination
+          _rce_candidate:1,     // True if candidate for range check elimination
+          _long_counted_loop_candidate:1;     // True if candidate for range check elimination
 
   Node_List* _safepts;          // List of safepoints in this loop
   Node_List* _required_safept;  // A inner loop cannot delete these safepts;
@@ -568,7 +569,7 @@ public:
       _head(head), _tail(tail),
       _phase(phase),
       _local_loop_unroll_limit(0), _local_loop_unroll_factor(0),
-      _nest(0), _irreducible(0), _has_call(0), _has_sfpt(0), _rce_candidate(0),
+      _nest(0), _irreducible(0), _has_call(0), _has_sfpt(0), _rce_candidate(0), _long_counted_loop_candidate(0),
       _safepts(NULL),
       _required_safept(NULL),
       _allow_optimizations(true)
@@ -1108,7 +1109,7 @@ public:
 
   bool is_counted_loop(Node* n, IdealLoopTree* &loop);
   Node * long_loop_replace_long_iv(Node* iv_to_replace, Node* inner_iv, Node* outer_phi, Node* inner_head);
-  bool is_long_counted_loop(Node* x, IdealLoopTree* loop, Node_List &old_new);
+  bool is_long_counted_loop(IdealLoopTree* loop, Node_List &old_new, bool transform);
 #ifdef ASSERT
   bool convert_to_long_loop(Node* cmp, Node* phi, IdealLoopTree* loop);
 #endif

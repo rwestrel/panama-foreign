@@ -1286,6 +1286,12 @@ Node *PhaseIdealLoop::split_if_with_blocks_pre( Node *n ) {
       return n;
     }
   }
+  if (n_blk->is_Loop()) {
+    IdealLoopTree *lp = get_loop(n_blk);
+    if (lp && lp->_long_counted_loop_candidate) {
+      return n;
+    }
+  }
 
   if (must_throttle_split_if()) return n;
 
