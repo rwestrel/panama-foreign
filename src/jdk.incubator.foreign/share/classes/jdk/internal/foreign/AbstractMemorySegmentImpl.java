@@ -92,9 +92,7 @@ public abstract class AbstractMemorySegmentImpl implements MemorySegment, Memory
     abstract ByteBuffer makeByteBuffer();
 
     static int defaultAccessModes(long size) {
-        return (enableSmallSegments && size < Integer.MAX_VALUE) ?
-                ALL_ACCESS | SMALL :
-                ALL_ACCESS;
+        return ALL_ACCESS;
     }
 
     @Override
@@ -365,11 +363,6 @@ public abstract class AbstractMemorySegmentImpl implements MemorySegment, Memory
     }
 
     @Override
-    public boolean isSmall() {
-        return isSet(SMALL);
-    }
-
-    @Override
     public void checkAccess(long offset, long length, boolean readOnly) {
         if (!readOnly && !isSet(WRITE)) {
             throw unsupportedAccessMode(WRITE);
@@ -420,19 +413,7 @@ public abstract class AbstractMemorySegmentImpl implements MemorySegment, Memory
     }
 
     private void checkBounds(long offset, long length) {
-        if (isSmall()) {
-            checkBoundsSmall((int)offset, (int)length);
-        } else {
-            if (length < 0) {
-                throw outOfBoundException(offset, length);
-            }
-            Preconditions.checkLongIndex(offset, this.length - length + 1, (s, args) -> outOfBoundException(offset, length));
-//            if (length < 0 ||
-//                    offset < 0 ||
-//                    offset > this.length - length) { // careful of overflow
-//                throw outOfBoundException(offset, length);
-//            }
-        }
+        Preconditions.checkLongIndex(offset, this.length - length + 1, (s, args) -> outOfBoundException(offset, length));
     }
 
     @Override
@@ -536,17 +517,8 @@ public abstract class AbstractMemorySegmentImpl implements MemorySegment, Memory
             if (currentIndex < elemCount) {
                 AbstractMemorySegmentImpl acquired = segment;
                 try {
-                    if (acquired.isSmall()) {
-                        int index = (int) currentIndex;
-                        int limit = (int) elemCount;
-                        int elemSize = (int) elementSize;
-                        for (; index < limit; index++) {
-                            action.accept(acquired.asSliceNoCheck(index * elemSize, elemSize));
-                        }
-                    } else {
-                        for (long i = currentIndex ; i < elemCount ; i++) {
-                            action.accept(acquired.asSliceNoCheck(i * elementSize, elementSize));
-                        }
+                    for (long i = currentIndex ; i < elemCount ; i++) {
+                        action.accept(acquired.asSliceNoCheck(i * elementSize, elementSize));
                     }
                 } finally {
                     currentIndex = elemCount;

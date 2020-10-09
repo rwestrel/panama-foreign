@@ -25,7 +25,6 @@
 
 package jdk.incubator.foreign;
 
-import jdk.internal.access.foreign.MemorySegmentProxy;
 import jdk.internal.vm.annotation.ForceInline;
 
 import java.lang.invoke.VarHandle;
@@ -1451,7 +1450,7 @@ public final class MemoryAccess {
      * @return a char value read from {@code segment} at the element index specified by {@code index}.
      */
     public static char getCharAtIndex_LE(MemorySegment segment, long index) {
-        return getCharAtOffset_LE(segment, scale(segment, index, 2));
+        return getCharAtOffset_LE(segment, scale(index, 2));
     }
 
     /**
@@ -1466,7 +1465,7 @@ public final class MemoryAccess {
      * @param value the char value to be written.
      */
     public static void setCharAtIndex_LE(MemorySegment segment, long index, char value) {
-        setCharAtOffset_LE(segment, scale(segment, index, 2), value);
+        setCharAtOffset_LE(segment, scale(index, 2), value);
     }
 
     /**
@@ -1481,7 +1480,7 @@ public final class MemoryAccess {
      * @return a short value read from {@code segment} at the element index specified by {@code index}.
      */
     public static short getShortAtIndex_LE(MemorySegment segment, long index) {
-        return getShortAtOffset_LE(segment, scale(segment, index, 2));
+        return getShortAtOffset_LE(segment, scale(index, 2));
     }
 
     /**
@@ -1496,7 +1495,7 @@ public final class MemoryAccess {
      * @param value the short value to be written.
      */
     public static void setShortAtIndex_LE(MemorySegment segment, long index, short value) {
-        setShortAtOffset_LE(segment, scale(segment, index, 2), value);
+        setShortAtOffset_LE(segment, scale(index, 2), value);
     }
 
     /**
@@ -1511,7 +1510,7 @@ public final class MemoryAccess {
      * @return an int value read from {@code segment} at the element index specified by {@code index}.
      */
     public static int getIntAtIndex_LE(MemorySegment segment, long index) {
-        return getIntAtOffset_LE(segment, scale(segment, index, 4));
+        return getIntAtOffset_LE(segment, scale(index, 4));
     }
 
     /**
@@ -1526,7 +1525,7 @@ public final class MemoryAccess {
      * @param value the int value to be written.
      */
     public static void setIntAtIndex_LE(MemorySegment segment, long index, int value) {
-        setIntAtOffset_LE(segment, scale(segment, index, 4), value);
+        setIntAtOffset_LE(segment, scale(index, 4), value);
     }
 
     /**
@@ -1541,7 +1540,7 @@ public final class MemoryAccess {
      * @return a float value read from {@code segment} at the element index specified by {@code index}.
      */
     public static float getFloatAtIndex_LE(MemorySegment segment, long index) {
-        return getFloatAtOffset_LE(segment, scale(segment, index, 4));
+        return getFloatAtOffset_LE(segment, scale(index, 4));
     }
 
     /**
@@ -1556,7 +1555,7 @@ public final class MemoryAccess {
      * @param value the float value to be written.
      */
     public static void setFloatAtIndex_LE(MemorySegment segment, long index, float value) {
-        setFloatAtOffset_LE(segment, scale(segment, index, 4), value);
+        setFloatAtOffset_LE(segment, scale(index, 4), value);
     }
 
     /**
@@ -1571,7 +1570,7 @@ public final class MemoryAccess {
      * @return a long value read from {@code segment} at the element index specified by {@code index}.
      */
     public static long getLongAtIndex_LE(MemorySegment segment, long index) {
-        return getLongAtOffset_LE(segment, scale(segment, index, 8));
+        return getLongAtOffset_LE(segment, scale(index, 8));
     }
 
     /**
@@ -1586,7 +1585,7 @@ public final class MemoryAccess {
      * @param value the long value to be written.
      */
     public static void setLongAtIndex_LE(MemorySegment segment, long index, long value) {
-        setLongAtOffset_LE(segment, scale(segment, index, 8), value);
+        setLongAtOffset_LE(segment, scale(index, 8), value);
     }
 
     /**
@@ -1601,7 +1600,7 @@ public final class MemoryAccess {
      * @return a double value read from {@code segment} at the element index specified by {@code index}.
      */
     public static double getDoubleAtIndex_LE(MemorySegment segment, long index) {
-        return getDoubleAtOffset_LE(segment, scale(segment, index, 8));
+        return getDoubleAtOffset_LE(segment, scale(index, 8));
     }
 
     /**
@@ -1616,7 +1615,7 @@ public final class MemoryAccess {
      * @param value the double value to be written.
      */
     public static void setDoubleAtIndex_LE(MemorySegment segment, long index, double value) {
-        setDoubleAtOffset_LE(segment, scale(segment, index, 8), value);
+        setDoubleAtOffset_LE(segment, scale(index, 8), value);
     }
 
     /**
@@ -1662,7 +1661,7 @@ public final class MemoryAccess {
      * @return a char value read from {@code segment} at the element index specified by {@code index}.
      */
     public static char getCharAtIndex_BE(MemorySegment segment, long index) {
-        return getCharAtOffset_BE(segment, scale(segment, index, 2));
+        return getCharAtOffset_BE(segment, scale(index, 2));
     }
 
     /**
@@ -1677,7 +1676,7 @@ public final class MemoryAccess {
      * @param value the char value to be written.
      */
     public static void setCharAtIndex_BE(MemorySegment segment, long index, char value) {
-        setCharAtOffset_BE(segment, scale(segment, index, 2), value);
+        setCharAtOffset_BE(segment, scale(index, 2), value);
     }
 
     /**
@@ -1692,7 +1691,7 @@ public final class MemoryAccess {
      * @return a short value read from {@code segment} at the element index specified by {@code index}.
      */
     public static short getShortAtIndex_BE(MemorySegment segment, long index) {
-        return getShortAtOffset_BE(segment, scale(segment, index, 2));
+        return getShortAtOffset_BE(segment, scale(index, 2));
     }
 
     /**
@@ -1707,7 +1706,7 @@ public final class MemoryAccess {
      * @param value the short value to be written.
      */
     public static void setShortAtIndex_BE(MemorySegment segment, long index, short value) {
-        setShortAtOffset_BE(segment, scale(segment, index, 2), value);
+        setShortAtOffset_BE(segment, scale(index, 2), value);
     }
 
     /**
@@ -1722,7 +1721,7 @@ public final class MemoryAccess {
      * @return an int value read from {@code segment} at the element index specified by {@code index}.
      */
     public static int getIntAtIndex_BE(MemorySegment segment, long index) {
-        return getIntAtOffset_BE(segment, scale(segment, index, 4));
+        return getIntAtOffset_BE(segment, scale(index, 4));
     }
 
     /**
@@ -1737,7 +1736,7 @@ public final class MemoryAccess {
      * @param value the int value to be written.
      */
     public static void setIntAtIndex_BE(MemorySegment segment, long index, int value) {
-        setIntAtOffset_BE(segment, scale(segment, index, 4), value);
+        setIntAtOffset_BE(segment, scale(index, 4), value);
     }
 
     /**
@@ -1752,7 +1751,7 @@ public final class MemoryAccess {
      * @return a float value read from {@code segment} at the element index specified by {@code index}.
      */
     public static float getFloatAtIndex_BE(MemorySegment segment, long index) {
-        return getFloatAtOffset_BE(segment, scale(segment, index, 4));
+        return getFloatAtOffset_BE(segment, scale(index, 4));
     }
 
     /**
@@ -1767,7 +1766,7 @@ public final class MemoryAccess {
      * @param value the float value to be written.
      */
     public static void setFloatAtIndex_BE(MemorySegment segment, long index, float value) {
-        setFloatAtOffset_BE(segment, scale(segment, index, 4), value);
+        setFloatAtOffset_BE(segment, scale(index, 4), value);
     }
 
     /**
@@ -1782,7 +1781,7 @@ public final class MemoryAccess {
      * @return a long value read from {@code segment} at the element index specified by {@code index}.
      */
     public static long getLongAtIndex_BE(MemorySegment segment, long index) {
-        return getLongAtOffset_BE(segment, scale(segment, index, 8));
+        return getLongAtOffset_BE(segment, scale(index, 8));
     }
 
     /**
@@ -1797,7 +1796,7 @@ public final class MemoryAccess {
      * @param value the long value to be written.
      */
     public static void setLongAtIndex_BE(MemorySegment segment, long index, long value) {
-        setLongAtOffset_BE(segment, scale(segment, index, 8), value);
+        setLongAtOffset_BE(segment, scale(index, 8), value);
     }
 
     /**
@@ -1812,7 +1811,7 @@ public final class MemoryAccess {
      * @return a double value read from {@code segment} at the element index specified by {@code index}.
      */
     public static double getDoubleAtIndex_BE(MemorySegment segment, long index) {
-        return getDoubleAtOffset_BE(segment, scale(segment, index, 8));
+        return getDoubleAtOffset_BE(segment, scale(index, 8));
     }
 
     /**
@@ -1827,7 +1826,7 @@ public final class MemoryAccess {
      * @param value the double value to be written.
      */
     public static void setDoubleAtIndex_BE(MemorySegment segment, long index, double value) {
-        setDoubleAtOffset_BE(segment, scale(segment, index, 8), value);
+        setDoubleAtOffset_BE(segment, scale(index, 8), value);
     }
 
     /**
@@ -1873,7 +1872,7 @@ public final class MemoryAccess {
      * @return a char value read from {@code segment} at the element index specified by {@code index}.
      */
     public static char getCharAtIndex(MemorySegment segment, long index) {
-        return getCharAtOffset(segment, scale(segment, index, 2));
+        return getCharAtOffset(segment, scale(index, 2));
     }
 
     /**
@@ -1888,7 +1887,7 @@ public final class MemoryAccess {
      * @param value the char value to be written.
      */
     public static void setCharAtIndex(MemorySegment segment, long index, char value) {
-        setCharAtOffset(segment, scale(segment, index, 2), value);
+        setCharAtOffset(segment, scale(index, 2), value);
     }
 
     /**
@@ -1903,7 +1902,7 @@ public final class MemoryAccess {
      * @return a short value read from {@code segment} at the element index specified by {@code index}.
      */
     public static short getShortAtIndex(MemorySegment segment, long index) {
-        return getShortAtOffset(segment, scale(segment, index, 2));
+        return getShortAtOffset(segment, scale(index, 2));
     }
 
     /**
@@ -1918,7 +1917,7 @@ public final class MemoryAccess {
      * @param value the short value to be written.
      */
     public static void setShortAtIndex(MemorySegment segment, long index, short value) {
-        setShortAtOffset(segment, scale(segment, index, 2), value);
+        setShortAtOffset(segment, scale(index, 2), value);
     }
 
     /**
@@ -1933,7 +1932,7 @@ public final class MemoryAccess {
      * @return an int value read from {@code segment} at the element index specified by {@code index}.
      */
     public static int getIntAtIndex(MemorySegment segment, long index) {
-        return getIntAtOffset(segment, scale(segment, index, 4));
+        return getIntAtOffset(segment, scale(index, 4));
     }
 
     /**
@@ -1948,7 +1947,7 @@ public final class MemoryAccess {
      * @param value the int value to be written.
      */
     public static void setIntAtIndex(MemorySegment segment, long index, int value) {
-        setIntAtOffset(segment, scale(segment, index, 4), value);
+        setIntAtOffset(segment, scale(index, 4), value);
     }
 
     /**
@@ -1963,7 +1962,7 @@ public final class MemoryAccess {
      * @return a float value read from {@code segment} at the element index specified by {@code index}.
      */
     public static float getFloatAtIndex(MemorySegment segment, long index) {
-        return getFloatAtOffset(segment, scale(segment, index, 4));
+        return getFloatAtOffset(segment, scale(index, 4));
     }
 
     /**
@@ -1978,7 +1977,7 @@ public final class MemoryAccess {
      * @param value the float value to be written.
      */
     public static void setFloatAtIndex(MemorySegment segment, long index, float value) {
-        setFloatAtOffset(segment, scale(segment, index, 4), value);
+        setFloatAtOffset(segment, scale(index, 4), value);
     }
 
     /**
@@ -1993,7 +1992,7 @@ public final class MemoryAccess {
      * @return a long value read from {@code segment} at the element index specified by {@code index}.
      */
     public static long getLongAtIndex(MemorySegment segment, long index) {
-        return getLongAtOffset(segment, scale(segment, index, 8));
+        return getLongAtOffset(segment, scale(index, 8));
     }
 
     /**
@@ -2008,7 +2007,7 @@ public final class MemoryAccess {
      * @param value the long value to be written.
      */
     public static void setLongAtIndex(MemorySegment segment, long index, long value) {
-        setLongAtOffset(segment, scale(segment, index, 8), value);
+        setLongAtOffset(segment, scale(index, 8), value);
     }
 
     /**
@@ -2023,7 +2022,7 @@ public final class MemoryAccess {
      * @return a double value read from {@code segment} at the element index specified by {@code index}.
      */
     public static double getDoubleAtIndex(MemorySegment segment, long index) {
-        return getDoubleAtOffset(segment, scale(segment, index, 8));
+        return getDoubleAtOffset(segment, scale(index, 8));
     }
 
     /**
@@ -2038,7 +2037,7 @@ public final class MemoryAccess {
      * @param value the double value to be written.
      */
     public static void setDoubleAtIndex(MemorySegment segment, long index, double value) {
-        setDoubleAtOffset(segment, scale(segment, index, 8), value);
+        setDoubleAtOffset(segment, scale(index, 8), value);
     }
 
     /**
@@ -2053,7 +2052,7 @@ public final class MemoryAccess {
      * @return a memory address read from {@code segment} at the element index specified by {@code index}.
      */
     public static MemoryAddress getAddressAtIndex(MemorySegment segment, long index) {
-        return getAddressAtOffset(segment, scale(segment, index, 8));
+        return getAddressAtOffset(segment, scale(index, 8));
     }
 
     /**
@@ -2068,11 +2067,11 @@ public final class MemoryAccess {
      * @param value the memory address to be written (expressed as an {@link Addressable} instance).
      */
     public static void setAddressAtIndex(MemorySegment segment, long index, Addressable value) {
-        setAddressAtOffset(segment, scale(segment, index, 8), value);
+        setAddressAtOffset(segment, scale(index, 8), value);
     }
 
     @ForceInline
-    private static long scale(MemorySegment address, long index, int size) {
-        return MemorySegmentProxy.multiplyOffsets(index, size, (MemorySegmentProxy)address);
+    private static long scale(long index, int size) {
+        return index * size;
     }
 }
